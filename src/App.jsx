@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // MANTENDO A NOSSA CONEXÃO!
+import { supabase } from './supabase'; // MANTENDO A CONEXÃO COM O SUPABASE
 import { 
   Play, Pause, CheckCircle2, Clock, Plus, Wrench, User, Factory,
   Search, BarChart3, ListTodo, ChevronDown, ChevronUp, FileText,
@@ -11,7 +11,7 @@ const MOCK_WORKERS = ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro
 const MOCK_SECTORS = ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem'];
 
 export default function App() {
-  const [oms, setOms] = useState([]); // Iniciando vazio para puxar do Supabase
+  const [oms, setOms] = useState([]); // Vazio para puxar do Supabase
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filter, setFilter] = useState('Todas');
@@ -765,11 +765,21 @@ export default function App() {
                               <Plus size={16} className="mr-2" /> NOVO TRABALHO
                             </button>
                             <button 
-                              onClick={() => setOmToFinish(om.id)}
-                              className="flex-none bg-red-100 hover:bg-red-200 text-red-700 py-2.5 px-4 rounded-md font-bold flex justify-center items-center transition-all shadow-sm text-xs"
-                              title="Encerrar OM inteira"
+                              onClick={() => {
+                                if (activeTasks.length > 0) {
+                                  alert('Existem trabalhos não concluídos. Conclua todas as tarefas individuais no "Painel de Execução" antes de encerrar a OM.');
+                                  return;
+                                }
+                                setOmToFinish(om.id);
+                              }}
+                              className={`flex-none py-2.5 px-4 rounded-md font-bold flex justify-center items-center transition-all shadow-sm text-xs ${
+                                activeTasks.length > 0 
+                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200' 
+                                  : 'bg-red-100 hover:bg-red-200 text-red-700'
+                              }`}
+                              title={activeTasks.length > 0 ? "Conclua todos os trabalhos pendentes antes de encerrar" : "Encerrar OM inteira"}
                             >
-                              <CheckCircle2 size={16} /> ENCERRAR OM
+                              <CheckCircle2 size={16} className={activeTasks.length > 0 ? "mr-1 opacity-50" : "mr-1"} /> ENCERRAR OM
                             </button>
                           </>
                         ) : (
