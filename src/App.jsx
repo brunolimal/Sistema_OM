@@ -1,46 +1,47 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // Importação da conexão com o banco
+import { supabase } from './supabase'; // Mantendo a conexão com o banco!
 import { 
   Play, Pause, CheckCircle2, Clock, Plus, Wrench, User, Factory,
   Search, BarChart3, ListTodo, ChevronDown, ChevronUp, FileText,
-  CalendarDays, AlertTriangle, Package, Settings, Users, ArrowRightLeft, Target, Trash2, Download
+  CalendarDays, AlertTriangle, Package, Settings, Users, ArrowRightLeft, Target, Trash2, Download, AlignLeft, Edit
 } from 'lucide-react';
 
-// Listas simuladas para os formulários
 const MOCK_PRODUCTS = ['Escora Metálica 3m', 'Escora Metálica 4m', 'Andaime Tubular 1x1.5m', 'Forcado Duplo', 'Sapata Ajustável', 'Tubo 6m', 'Abraçadeira Fixa', 'Plataforma Metálica'];
 const MOCK_WORKERS = ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro', 'Marcos Paulo', 'Lucas Lima'];
 const MOCK_SECTORS = ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem'];
 
 export default function App() {
-  // O estado inicial agora é vazio, pois os dados virão do banco
   const [oms, setOms] = useState([]);
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filter, setFilter] = useState('Todas');
   const [search, setSearch] = useState('');
 
-  // View States
   const [currentView, setCurrentView] = useState('oms');
   const [omToFinish, setOmToFinish] = useState(null);
   
-  // Manage Team State
-  const [omToManageTeam, setOmToManageTeam] = useState(null);
+  const [omToUpdate, setOmToUpdate] = useState(null);
   const [manageSelectedWorker, setManageSelectedWorker] = useState('');
   const [manageSelectedSector, setManageSelectedSector] = useState('');
+  const [manageSelectedProduct, setManageSelectedProduct] = useState(MOCK_PRODUCTS[0]);
+  const [manageSelectedQty, setManageSelectedQty] = useState(1);
 
-  // States para Nova OM
+  const [omToStart, setOmToStart] = useState(null);
+  const [actionWorker, setActionWorker] = useState('');
+  const [actionSector, setActionSector] = useState('');
+  const [actionProduct, setActionProduct] = useState('');
+  const [actionQty, setActionQty] = useState(1);
+
   const [newTitle, setNewTitle] = useState('');
   const [newObjective, setNewObjective] = useState('Manutenção');
   const [newCriticality, setNewCriticality] = useState('Programada');
-  const [newAssignee, setNewAssignee] = useState('');
+  const [newObservation, setNewObservation] = useState('');
   const [newSector, setNewSector] = useState(MOCK_SECTORS[0]);
-  
-  // States para Produtos da Nova OM
   const [newProducts, setNewProducts] = useState([]);
   const [currentProduct, setCurrentProduct] = useState(MOCK_PRODUCTS[0]);
   const [currentQty, setCurrentQty] = useState(1);
 
-  // --- INTEGRAÇÃO COM SUPABASE ---
+  // --- INTEGRAÇÃO SUPABASE ---
   useEffect(() => {
     fetchOms();
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
@@ -48,25 +49,16 @@ export default function App() {
   }, []);
 
   const fetchOms = async () => {
-    const { data, error } = await supabase
-      .from('oms')
-      .select('*')
-      .order('createdat', { ascending: false });
-    
-    if (error) {
-      console.error('Erro ao buscar OMs:', error);
-      return;
-    }
-
+    const { data, error } = await supabase.from('oms').select('*').order('createdat', { ascending: false });
     if (data) {
-      // Traduz os dados do banco para o formato que a interface espera
       const formattedData = data.map(dbOm => ({
         id: dbOm.id,
         title: dbOm.title || '',
-        sectors: dbOm.sector ? dbOm.sector.split(', ') : [],
-        assignees: dbOm.assignee ? dbOm.assignee.split(', ') : [],
+        sectors: dbOm.sector ? dbOm.sector.split(', ').filter(Boolean) : [],
+        assignees: dbOm.assignee ? dbOm.assignee.split(', ').filter(Boolean) : [],
         objective: dbOm.objective || 'Manutenção',
         criticality: dbOm.criticality || 'Programada',
+        observation: dbOm.observation || '',
         products: dbOm.products || [],
         status: dbOm.status || 'pending',
         timeLogs: dbOm.timelogs || [],
@@ -80,9 +72,8 @@ export default function App() {
     const { error } = await supabase.from('oms').update(updates).eq('id', id);
     if (!error) fetchOms(); 
   };
-  // -------------------------------
+  // ---------------------------
 
-  // Helpers de Tempo
   const calculateTotalTime = (timeLogs) => {
     let total = 0;
     timeLogs.forEach(log => {
@@ -100,59 +91,96 @@ export default function App() {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const formatDate = (isoString) => new Date(isoString).toLocaleDateString('pt-BR');
-
-  // Função para Exportar para Excel (CSV)
-  const exportToCSV = () => {
-    const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Setores', 'Responsáveis', 'Produtos', 'Status', 'Tempo Executado'];
-
-    const rows = oms.map(om => {
-      const date = formatDate(om.createdAt);
-      const productsStr = om.products.map(p => `${p.quantity}x ${p.name}`).join(' | ');
-      const totalTimeStr = formatTime(calculateTotalTime(om.timeLogs));
-      
-      const statusPt = om.status === 'pending' ? 'Pendente' : 
-                       om.status === 'in_progress' ? 'Em Andamento' : 
-                       om.status === 'paused' ? 'Pausado' : 'Concluído';
-
-      return [
-        om.id,
-        date,
-        `"${om.title}"`,
-        om.objective,
-        om.criticality,
-        `"${om.sectors.join(', ')}"`,
-        `"${om.assignees.join(', ')}"`,
-        `"${productsStr}"`,
-        statusPt,
-        totalTimeStr
-      ];
-    });
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(e => e.join(','))
-    ].join('\n');
-
-    const blob = new Blob([`\ufeff${csvContent}`], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Relatorio_Producao_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const formatClockTime = (ms) => {
+    if (!ms) return '--:--';
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Ações Principais no Banco
-  const handleStart = (id) => {
-    const om = oms.find(o => o.id === id);
-    if (om.assignees.length === 0) {
-      alert("Por favor, selecione um responsável antes de iniciar a OM.");
-      return;
+  const formatDate = (isoString) => new Date(isoString).toLocaleDateString('pt-BR');
+
+  const exportToExcel = async () => {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Falha ao carregar a biblioteca Excel'));
+          document.head.appendChild(script);
+        });
+      }
+      const XLSX = window.XLSX;
+      const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Observação', 'Setor', 'Responsável', 'Produtos', 'Status', 'Tempo Executado'];
+      const rows = [];
+
+      oms.forEach(om => {
+        const date = formatDate(om.createdAt);
+        const productsStr = om.products.map(p => `${p.quantity}x ${p.name}`).join(' | ');
+        const statusPt = om.status === 'pending' ? 'Pendente' : 
+                         om.status === 'in_progress' ? 'Em Andamento' : 
+                         om.status === 'paused' ? 'Pausado' : 'Concluído';
+
+        if (om.timeLogs && om.timeLogs.length > 0) {
+          om.timeLogs.forEach(log => {
+            const logTimeMs = log.end ? (log.end - log.start) : (currentTime - log.start);
+            const logTimeStr = formatTime(logTimeMs);
+            const sessionProduct = log.product ? `${log.quantity}x ${log.product}` : productsStr;
+            
+            rows.push([
+              om.id, date, om.title, om.objective, om.criticality, om.observation || '',
+              log.sector || '-', log.worker || '-', sessionProduct, statusPt, logTimeStr
+            ]);
+          });
+        } else {
+          rows.push([
+            om.id, date, om.title, om.objective, om.criticality, om.observation || '',
+            om.sectors.join(', ') || '-', om.assignees.join(', ') || '-', productsStr, statusPt, '00:00:00'
+          ]);
+        }
+      });
+
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "RelatorioProducao");
+      
+      const wscols = headers.map(() => ({ wch: 20 }));
+      worksheet['!cols'] = wscols;
+
+      XLSX.writeFile(workbook, `Relatorio_Producao_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.xlsx`);
+    } catch (error) {
+      console.error("Erro ao gerar Excel:", error);
+      alert("Não foi possível carregar o exportador Excel no momento. Tente novamente.");
     }
-    const newLogs = [...om.timeLogs, { start: Date.now(), end: null }];
-    updateOmInDatabase(id, { status: 'in_progress', timelogs: newLogs });
+  };
+
+  const handleStartClick = (id) => {
+    const om = oms.find(o => o.id === id);
+    setOmToStart(om);
+    setActionWorker('');
+    setActionSector('');
+    setActionProduct(om.products && om.products.length > 0 ? om.products[0].name : '');
+    setActionQty(1);
+  };
+
+  const confirmStartAction = (e) => {
+    e.preventDefault();
+    if (!omToStart || !actionWorker || !actionSector) return;
+
+    const om = oms.find(o => o.id === omToStart.id);
+    const newAssignees = !om.assignees.includes(actionWorker) ? [...om.assignees, actionWorker].join(', ') : om.assignees.join(', ');
+    const newSectors = !om.sectors.includes(actionSector) ? [...om.sectors, actionSector].join(', ') : om.sectors.join(', ');
+    
+    const newLogs = [...om.timeLogs, { 
+      start: Date.now(), 
+      end: null, 
+      worker: actionWorker, 
+      sector: actionSector,
+      product: actionProduct,
+      quantity: Number(actionQty)
+    }];
+
+    updateOmInDatabase(om.id, { status: 'in_progress', assignee: newAssignees, sector: newSectors, timelogs: newLogs });
+    setOmToStart(null);
   };
 
   const handlePause = (id) => {
@@ -160,7 +188,6 @@ export default function App() {
     const updatedLogs = [...om.timeLogs];
     const lastLog = updatedLogs[updatedLogs.length - 1];
     if (lastLog && !lastLog.end) lastLog.end = Date.now();
-    
     updateOmInDatabase(id, { status: 'paused', timelogs: updatedLogs });
   };
 
@@ -170,12 +197,10 @@ export default function App() {
     const updatedLogs = [...om.timeLogs];
     const lastLog = updatedLogs[updatedLogs.length - 1];
     if (lastLog && !lastLog.end) lastLog.end = Date.now();
-    
     updateOmInDatabase(omToFinish, { status: 'completed', timelogs: updatedLogs });
     setOmToFinish(null);
   };
 
-  // Funções de Criação de OM
   const handleAddProduct = () => {
     if (currentQty > 0) {
       const existingProduct = newProducts.find(p => p.name === currentProduct);
@@ -188,15 +213,10 @@ export default function App() {
     }
   };
 
-  const handleRemoveProduct = (name) => {
-    setNewProducts(newProducts.filter(p => p.name !== name));
-  };
-
   const handleCreateOM = async (e) => {
     e.preventDefault();
     if (!newTitle) return;
 
-    // Gera o ID pegando o maior número atual, ou começa no 1001
     const currentMaxId = oms.length > 0 
       ? Math.max(...oms.map(o => parseInt(o.id.replace('OM-', '')) || 0))
       : 1000;
@@ -206,9 +226,10 @@ export default function App() {
       id: newId,
       title: newTitle,
       sector: newSector,
-      assignee: newAssignee,
+      assignee: '',
       objective: newObjective,
       criticality: newCriticality,
+      observation: newObservation,
       products: newProducts,
       status: 'pending',
       timelogs: []
@@ -220,57 +241,85 @@ export default function App() {
       fetchOms();
       setIsModalOpen(false);
       setNewTitle('');
-      setNewAssignee('');
+      setNewObservation('');
       setNewProducts([]);
       setNewObjective('Manutenção');
       setNewCriticality('Programada');
     } else {
-      alert("Erro ao salvar no banco: " + error.message);
+      alert("Erro ao salvar: " + error.message);
     }
   };
 
-  // Funções de Gerenciamento de Equipe
-  const assignWorkerDirectly = (omId, workerName) => {
-    if (!workerName) return;
-    const om = oms.find(o => o.id === omId);
-    const newAssignees = [...om.assignees, workerName].join(', ');
-    updateOmInDatabase(omId, { assignee: newAssignees });
-  };
+  // Funções de Gerenciamento da OM (Modal Atualizar)
+  // Como são atualizações diretas, usamos o banco e o fetchOms atualiza a tela
+  const handleAddDataToOm = async (type) => {
+    if (!omToUpdate) return;
+    const om = oms.find(o => o.id === omToUpdate.id);
+    let updates = {};
 
-  const handleAddTeamMember = () => {
-    if (!omToManageTeam) return;
-    const om = oms.find(o => o.id === omToManageTeam.id);
-    
-    const newAssignees = manageSelectedWorker && !om.assignees.includes(manageSelectedWorker) 
-      ? [...om.assignees, manageSelectedWorker].join(', ') : om.assignees.join(', ');
-      
-    const newSectors = manageSelectedSector && !om.sectors.includes(manageSelectedSector)
-      ? [...om.sectors, manageSelectedSector].join(', ') : om.sectors.join(', ');
-    
-    updateOmInDatabase(om.id, { assignee: newAssignees, sector: newSectors });
+    if (type === 'worker' && manageSelectedWorker && !om.assignees.includes(manageSelectedWorker)) {
+      updates.assignee = [...om.assignees, manageSelectedWorker].join(', ');
+    }
+    if (type === 'sector' && manageSelectedSector && !om.sectors.includes(manageSelectedSector)) {
+      updates.sector = [...om.sectors, manageSelectedSector].join(', ');
+    }
+    if (type === 'product' && manageSelectedProduct && manageSelectedQty > 0) {
+      const existing = om.products.find(p => p.name === manageSelectedProduct);
+      let newProducts;
+      if (existing) {
+        newProducts = om.products.map(p => p.name === manageSelectedProduct ? { ...p, quantity: p.quantity + Number(manageSelectedQty) } : p);
+      } else {
+        newProducts = [...om.products, { name: manageSelectedProduct, quantity: Number(manageSelectedQty) }];
+      }
+      updates.products = newProducts;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await updateOmInDatabase(om.id, updates);
+      // Força a atualização do modal local para evitar fechamento
+      setOmToUpdate(prev => ({...prev, ...updates, 
+        assignees: updates.assignee ? updates.assignee.split(', ') : prev.assignees,
+        sectors: updates.sector ? updates.sector.split(', ') : prev.sectors
+      }));
+    }
+
     setManageSelectedWorker('');
     setManageSelectedSector('');
-    setOmToManageTeam(null);
+    setManageSelectedQty(1);
   };
 
-  const handleRemoveTeamMember = (omId, type, itemToRemove) => {
+  const handleRemoveDataFromOm = async (omId, type, itemToRemove) => {
     const om = oms.find(o => o.id === omId);
-    if (type === 'worker') {
-      const newAssignees = om.assignees.filter(w => w !== itemToRemove).join(', ');
-      updateOmInDatabase(omId, { assignee: newAssignees });
-    }
-    if (type === 'sector') {
-      const newSectors = om.sectors.filter(s => s !== itemToRemove).join(', ');
-      updateOmInDatabase(omId, { sector: newSectors });
-    }
+    let updates = {};
+
+    if (type === 'worker') updates.assignee = om.assignees.filter(w => w !== itemToRemove).join(', ');
+    if (type === 'sector') updates.sector = om.sectors.filter(s => s !== itemToRemove).join(', ');
+    if (type === 'product') updates.products = om.products.filter(p => p.name !== itemToRemove);
+
+    await updateOmInDatabase(omId, updates);
+    setOmToUpdate(prev => ({...prev, ...updates,
+        assignees: updates.assignee !== undefined ? (updates.assignee ? updates.assignee.split(', ') : []) : prev.assignees,
+        sectors: updates.sector !== undefined ? (updates.sector ? updates.sector.split(', ') : []) : prev.sectors
+    }));
   };
 
-  // Filtros
+  const updateProductQtyInOm = async (omId, productName, newQty) => {
+    if(newQty < 1) return;
+    const om = oms.find(o => o.id === omId);
+    const newProducts = om.products.map(p => p.name === productName ? { ...p, quantity: Number(newQty) } : p);
+    
+    await updateOmInDatabase(omId, { products: newProducts });
+    setOmToUpdate(prev => ({...prev, products: newProducts}));
+  };
+
   const filteredOms = oms.filter(om => {
     const searchLower = search.toLowerCase();
-    const matchesSearch = om.title.toLowerCase().includes(searchLower) || 
-                          om.id.toLowerCase().includes(searchLower) ||
-                          om.assignees.some(a => a.toLowerCase().includes(searchLower));
+    const searchableText = [
+      om.title, om.id, om.objective, om.criticality, om.observation,
+      ...om.assignees, ...om.sectors, ...om.products.map(p => p.name)
+    ].join(' ').toLowerCase();
+
+    const matchesSearch = searchableText.includes(searchLower);
     
     if (filter === 'Todas') return matchesSearch;
     if (filter === 'Pendentes') return om.status === 'pending' && matchesSearch;
@@ -281,7 +330,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
-      {/* Header */}
       <header className="bg-slate-900 text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-3">
@@ -318,19 +366,16 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
         {currentView === 'oms' ? (
           <>
-            {/* Controls */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
               <div className="flex items-center bg-white p-2 rounded-lg shadow-sm border border-gray-200 w-full md:w-auto">
                 <Search size={20} className="text-gray-400 ml-2" />
                 <input 
                   type="text" 
-                  placeholder="Buscar por código, título ou colaborador..." 
-                  className="bg-transparent border-none focus:ring-0 outline-none ml-2 w-full md:w-72 text-sm"
+                  placeholder="Buscar por código, título, observação..." 
+                  className="bg-transparent border-none focus:ring-0 outline-none ml-2 w-full md:w-80 text-sm"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -351,7 +396,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* OM Cards Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredOms.length === 0 ? (
                 <div className="col-span-full text-center py-12 text-gray-500 bg-white rounded-xl border border-dashed border-gray-300">
@@ -364,12 +408,16 @@ export default function App() {
                     <div key={om.id} className={`bg-white rounded-xl shadow-sm border-l-4 overflow-hidden flex flex-col transition-all hover:shadow-md ${
                       om.criticality === 'Imediata' && om.status !== 'completed' ? 'border-l-red-500' : 'border-l-blue-500'
                     }`}>
-                      {/* Card Header */}
                       <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-start">
                         <div>
-                          <span className="text-xs font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded shadow-sm">
-                            {om.id}
-                          </span>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded shadow-sm">
+                              {om.id}
+                            </span>
+                            <span className="text-[11px] text-gray-400 font-medium flex items-center">
+                              <CalendarDays size={12} className="mr-1"/> {formatDate(om.createdAt)}
+                            </span>
+                          </div>
                           <h3 className="mt-2 font-bold text-gray-800 text-lg leading-tight pr-4">
                             {om.title}
                           </h3>
@@ -387,10 +435,16 @@ export default function App() {
                         </span>
                       </div>
 
-                      {/* Card Body */}
                       <div className="p-4 flex-grow space-y-4">
-                        
-                        {/* Badges: Objetivo e Criticidade */}
+                        {om.observation && (
+                          <div className="bg-amber-50 p-3 rounded-lg border border-amber-100/50">
+                            <p className="text-xs font-bold text-amber-800 mb-1 flex items-center">
+                              <AlignLeft size={14} className="mr-1"/> Observações
+                            </p>
+                            <p className="text-sm text-gray-700 italic">{om.observation}</p>
+                          </div>
+                        )}
+
                         <div className="flex space-x-2">
                           <span className="flex items-center text-xs font-medium bg-slate-100 text-slate-700 px-2 py-1 rounded">
                             <Target size={12} className="mr-1"/> {om.objective}
@@ -402,7 +456,6 @@ export default function App() {
                           </span>
                         </div>
 
-                        {/* Produtos List */}
                         {om.products && om.products.length > 0 && (
                           <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
                             <p className="text-xs font-bold text-orange-800 mb-2 flex items-center">
@@ -419,51 +472,64 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Setores e Colaboradores */}
                         <div className="space-y-2">
                           <div className="flex items-start">
                             <Wrench size={16} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
                             <div className="text-sm text-gray-600 flex flex-wrap gap-1">
                               {om.sectors.length > 0 ? om.sectors.map(s => (
                                 <span key={s} className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200">{s}</span>
-                              )) : <span className="text-gray-400 italic">Sem setor definido</span>}
+                              )) : <span className="text-gray-400 italic">Nenhum setor alocado</span>}
                             </div>
                           </div>
                           
                           <div className="flex items-start pt-1">
                             <Users size={16} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
-                            <div className="text-sm text-gray-600 flex-grow">
-                              {om.assignees.length > 0 ? (
-                                <div className="flex flex-wrap gap-1 items-center">
-                                  {om.assignees.map(a => (
-                                    <span key={a} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium border border-blue-100">{a}</span>
-                                  ))}
-                                  {om.status !== 'completed' && (
-                                    <button 
-                                      onClick={() => { setOmToManageTeam(om); setIsModalOpen(false); }}
-                                      className="ml-auto text-xs text-blue-600 hover:text-blue-800 underline flex items-center"
-                                    >
-                                      <ArrowRightLeft size={12} className="mr-1"/> Gerenciar Equipe
-                                    </button>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="flex items-center space-x-2">
-                                  <select 
-                                    className="text-xs border border-gray-300 rounded p-1 flex-grow outline-none focus:border-blue-500"
-                                    onChange={(e) => assignWorkerDirectly(om.id, e.target.value)}
-                                    defaultValue=""
-                                  >
-                                    <option value="" disabled>Selecione seu nome para assumir...</option>
-                                    {MOCK_WORKERS.map(w => <option key={w} value={w}>{w}</option>)}
-                                  </select>
-                                </div>
+                            <div className="text-sm text-gray-600 flex flex-wrap gap-1 items-center w-full">
+                              {om.assignees.length > 0 ? om.assignees.map(a => (
+                                <span key={a} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium border border-blue-100">{a}</span>
+                              )) : <span className="text-gray-400 italic">Sem responsável</span>}
+                              
+                              {om.status !== 'completed' && (
+                                <button 
+                                  onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
+                                  className="ml-auto text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center bg-white border border-slate-200 px-2 py-1 rounded shadow-sm"
+                                >
+                                  <Edit size={12} className="mr-1"/> Atualizar Dados
+                                </button>
                               )}
                             </div>
                           </div>
                         </div>
+
+                        {om.timeLogs.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-gray-100">
+                            <p className="text-xs font-bold text-gray-500 mb-2 uppercase">Histórico de Ações</p>
+                            <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                              {om.timeLogs.map((log, idx) => (
+                                <div key={idx} className="bg-white border border-gray-200 p-2 rounded text-xs text-gray-600 shadow-sm">
+                                  <div className="flex items-center text-blue-700 font-medium mb-1">
+                                    <Play size={10} className="mr-1"/> Iniciado/Retomado
+                                  </div>
+                                  <div className="pl-3 mb-1">
+                                    {formatClockTime(log.start)} por <strong>{log.worker}</strong> ({log.sector})
+                                    {log.product && <div className="text-orange-600 mt-0.5 font-medium">↳ {log.quantity}x {log.product}</div>}
+                                  </div>
+                                  {log.end && (
+                                    <>
+                                      <div className="flex items-center text-orange-600 font-medium mb-1 pt-1 border-t border-gray-50">
+                                        <Pause size={10} className="mr-1"/> Pausado/Finalizado
+                                      </div>
+                                      <div className="pl-3">
+                                        {formatClockTime(log.end)}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         
-                        {/* Timer Display */}
                         <div className={`mt-2 p-3 rounded-lg flex flex-col justify-center border ${
                           om.status === 'in_progress' ? 'bg-slate-900 border-slate-800 text-white shadow-inner' : 'bg-gray-50 border-gray-200 text-gray-800'
                         }`}>
@@ -479,14 +545,13 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Card Actions */}
                       <div className="p-4 bg-gray-50 border-t border-gray-200 flex space-x-2">
                         {om.status === 'pending' && (
                           <button 
-                            onClick={() => handleStart(om.id)}
+                            onClick={() => handleStartClick(om.id)}
                             className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
                           >
-                            <Play size={18} className="mr-2" /> INICIAR PRODUÇÃO
+                            <Play size={18} className="mr-2" /> INICIAR
                           </button>
                         )}
 
@@ -510,7 +575,7 @@ export default function App() {
                         {om.status === 'paused' && (
                           <>
                             <button 
-                              onClick={() => handleStart(om.id)}
+                              onClick={() => handleStartClick(om.id)}
                               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
                             >
                               <Play size={18} className="mr-2" /> RETOMAR
@@ -537,7 +602,6 @@ export default function App() {
             </div>
           </>
         ) : (
-          /* --- DASHBOARD VIEW --- */
           <div className="space-y-6 animate-in fade-in duration-500">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
               <BarChart3 className="mr-3 text-orange-500" /> Visão Geral da Produção
@@ -570,17 +634,16 @@ export default function App() {
               </div>
             </div>
 
-            {/* Relatório Detalhado */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-8">
               <div className="p-6 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center">
                   <FileText className="mr-2 text-slate-600" /> Relatório Detalhado de Produção
                 </h3>
                 <button 
-                  onClick={exportToCSV}
+                  onClick={exportToExcel}
                   className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md font-bold text-sm flex items-center transition-colors shadow-sm"
                 >
-                  <Download size={16} className="mr-2" /> Exportar Planilha Excel
+                  <Download size={16} className="mr-2" /> Exportar Planilha XLSX
                 </button>
               </div>
               <div className="overflow-x-auto">
@@ -676,7 +739,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Criticidade</label>
                   <select value={newCriticality} onChange={(e) => setNewCriticality(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-2 bg-white focus:ring-2 focus:ring-red-500 outline-none">
@@ -690,13 +753,16 @@ export default function App() {
                     {MOCK_SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Responsável Inicial</label>
-                  <select value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-2 bg-white outline-none">
-                    <option value="">Deixar em aberto (Opcional)</option>
-                    {MOCK_WORKERS.map(w => <option key={w} value={w}>{w}</option>)}
-                  </select>
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Observações Adicionais</label>
+                <textarea 
+                  value={newObservation} 
+                  onChange={(e) => setNewObservation(e.target.value)}
+                  placeholder="Detalhes, alertas, localizações..."
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 outline-none h-20 resize-none"
+                />
               </div>
 
               <div className="border border-orange-200 rounded-lg overflow-hidden">
@@ -746,61 +812,147 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: GERENCIAR EQUIPE */}
-      {omToManageTeam && (
+      {/* MODAL: INICIAR / RETOMAR OM (Identificação de Usuário/Setor) */}
+      {omToStart && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
-            <div className="bg-blue-600 text-white p-4 flex justify-between items-center shrink-0">
-              <h2 className="text-lg font-bold flex items-center"><Users className="mr-2" size={20}/> Gerenciar Equipe da OM</h2>
-              <button onClick={() => setOmToManageTeam(null)} className="text-blue-200 hover:text-white transition-colors">✕</button>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
+            <div className="bg-blue-600 text-white p-4 flex items-center shrink-0">
+              <Play className="mr-2" size={20}/>
+              <h2 className="text-lg font-bold">{omToStart.status === 'paused' ? 'Retomar Produção' : 'Iniciar Produção'}</h2>
             </div>
-            
-            <div className="p-6 space-y-6">
-              <div className="text-sm text-gray-600 border-b pb-4">
-                Você está gerenciando a ordem: <br/>
-                <strong className="text-gray-900">{omToManageTeam.id} - {omToManageTeam.title}</strong>
-              </div>
+            <form onSubmit={confirmStartAction} className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 mb-4">
+                Para prosseguir com a OM <strong>{omToStart.id}</strong>, informe seus dados para o registro de tempo:
+              </p>
 
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-                <h3 className="text-xs font-bold text-blue-800 uppercase mb-3">Adicionar / Transferir</h3>
-                <div className="space-y-3">
-                  <select value={manageSelectedWorker} onChange={(e) => setManageSelectedWorker(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm outline-none">
-                    <option value="">Selecione um Colaborador...</option>
-                    {MOCK_WORKERS.filter(w => !omToManageTeam.assignees.includes(w)).map(w => <option key={w} value={w}>{w}</option>)}
-                  </select>
-                  <select value={manageSelectedSector} onChange={(e) => setManageSelectedSector(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm outline-none">
-                    <option value="">Selecione um Setor (Opcional)...</option>
-                    {MOCK_SECTORS.filter(s => !omToManageTeam.sectors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <button onClick={handleAddTeamMember} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-bold text-sm transition-colors">
-                    Adicionar à OM
-                  </button>
-                </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Colaborador</label>
+                <select required value={actionWorker} onChange={(e) => setActionWorker(e.target.value)} className="w-full border border-gray-300 rounded p-2 outline-none focus:border-blue-500">
+                  <option value="" disabled>Selecione seu nome...</option>
+                  {MOCK_WORKERS.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
               </div>
 
               <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase mb-3">Equipe Atual Trabalhando</h3>
-                <div className="space-y-2">
-                  {omToManageTeam.assignees.map(a => (
-                    <div key={a} className="flex justify-between items-center bg-white border border-gray-200 p-2 rounded text-sm">
-                      <span className="font-medium text-gray-700"><User size={14} className="inline mr-1 text-gray-400"/> {a}</span>
-                      <button onClick={() => handleRemoveTeamMember(omToManageTeam.id, 'worker', a)} className="text-red-500 hover:text-red-700 text-xs font-bold px-2 py-1 bg-red-50 rounded">Remover</button>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Setor Atual</label>
+                <select required value={actionSector} onChange={(e) => setActionSector(e.target.value)} className="w-full border border-gray-300 rounded p-2 outline-none focus:border-blue-500">
+                  <option value="" disabled>Selecione o setor...</option>
+                  {MOCK_SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              {omToStart.products && omToStart.products.length > 0 && (
+                <div className="flex space-x-2 bg-orange-50 p-3 rounded-lg border border-orange-100 mt-2">
+                  <div className="flex-grow">
+                    <label className="block text-xs font-bold text-orange-800 uppercase mb-1">Produto Alvo (Sessão)</label>
+                    <select value={actionProduct} onChange={(e) => setActionProduct(e.target.value)} className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm bg-white">
+                      <option value="">Nenhum específico</option>
+                      {omToStart.products.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-24">
+                    <label className="block text-xs font-bold text-orange-800 uppercase mb-1">Qtd</label>
+                    <input type="number" min="1" value={actionQty} onChange={(e) => setActionQty(e.target.value)} className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm" />
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 flex space-x-3">
+                <button type="button" onClick={() => setOmToStart(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded font-bold transition-colors">Cancelar</button>
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded font-bold transition-colors shadow-sm">Confirmar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ATUALIZAR DADOS DA OM (Setores, Pessoas, Quantidades) */}
+      {omToUpdate && (
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-slate-700 text-white p-4 flex justify-between items-center shrink-0">
+              <h2 className="text-lg font-bold flex items-center"><Edit className="mr-2" size={20}/> Atualizar Dados da OM</h2>
+              <button onClick={() => setOmToUpdate(null)} className="text-slate-300 hover:text-white transition-colors">✕</button>
+            </div>
+            
+            <div className="p-6 space-y-6 overflow-y-auto">
+              <div className="text-sm text-gray-600 border-b pb-3">
+                Editando informações da ordem: <strong className="text-gray-900">{omToUpdate.id}</strong>
+              </div>
+
+              {/* Gestão de Produtos e Quantidades */}
+              <div>
+                <h3 className="text-xs font-bold text-orange-600 uppercase mb-2 flex items-center border-b pb-1"><Package size={14} className="mr-1"/> Produtos & Quantidades</h3>
+                
+                <div className="flex space-x-2 mb-3 mt-2">
+                  <select value={manageSelectedProduct} onChange={(e) => setManageSelectedProduct(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
+                    {MOCK_PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <input type="number" min="1" value={manageSelectedQty} onChange={(e) => setManageSelectedQty(e.target.value)} className="w-16 border border-gray-300 rounded p-1.5 text-xs outline-none" placeholder="Qtd"/>
+                  <button onClick={() => handleAddDataToOm('product')} className="bg-orange-500 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-orange-600">Adicionar</button>
+                </div>
+
+                <div className="space-y-1 mt-2">
+                  {omToUpdate.products.map(p => (
+                    <div key={p.name} className="flex justify-between items-center bg-gray-50 border border-gray-200 p-2 rounded text-sm">
+                      <span className="font-medium text-gray-700">{p.name}</span>
+                      <div className="flex items-center space-x-2">
+                        <input 
+                          type="number" min="1" 
+                          value={p.quantity} 
+                          onChange={(e) => updateProductQtyInOm(omToUpdate.id, p.name, e.target.value)}
+                          className="w-16 border border-gray-300 rounded p-1 text-center font-bold text-orange-600 outline-none focus:border-orange-400"
+                        />
+                        <button onClick={() => handleRemoveDataFromOm(omToUpdate.id, 'product', p.name)} className="text-red-500 hover:text-red-700 bg-red-50 p-1 rounded"><Trash2 size={14}/></button>
+                      </div>
                     </div>
                   ))}
-                  {omToManageTeam.sectors.map(s => (
-                    <div key={s} className="flex justify-between items-center bg-gray-50 border border-gray-200 p-2 rounded text-sm">
-                      <span className="font-medium text-gray-600"><Wrench size={14} className="inline mr-1 text-gray-400"/> Setor: {s}</span>
-                      <button onClick={() => handleRemoveTeamMember(omToManageTeam.id, 'sector', s)} className="text-red-500 hover:text-red-700 text-xs font-bold px-2 py-1 bg-red-50 rounded">Remover</button>
-                    </div>
-                  ))}
-                  {omToManageTeam.assignees.length === 0 && omToManageTeam.sectors.length === 0 && (
-                    <p className="text-sm text-gray-400 italic text-center">Ninguém alocado nesta OM.</p>
-                  )}
+                  {omToUpdate.products.length === 0 && <p className="text-xs text-gray-400 italic">Sem produtos.</p>}
                 </div>
               </div>
 
-              <button onClick={() => setOmToManageTeam(null)} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-lg font-bold transition-colors">
-                Concluir Alterações
+              {/* Gestão de Colaboradores */}
+              <div>
+                <h3 className="text-xs font-bold text-blue-600 uppercase mb-2 flex items-center border-b pb-1"><Users size={14} className="mr-1"/> Colaboradores Responsáveis</h3>
+                <div className="flex space-x-2 mb-3 mt-2">
+                  <select value={manageSelectedWorker} onChange={(e) => setManageSelectedWorker(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
+                    <option value="">Selecione um Colaborador...</option>
+                    {MOCK_WORKERS.filter(w => !omToUpdate.assignees.includes(w)).map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
+                  <button onClick={() => handleAddDataToOm('worker')} className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-700">Incluir</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {omToUpdate.assignees.map(a => (
+                    <span key={a} className="bg-blue-50 border border-blue-200 text-blue-800 text-xs px-2 py-1 rounded flex items-center">
+                      {a} <button onClick={() => handleRemoveDataFromOm(omToUpdate.id, 'worker', a)} className="ml-2 text-blue-400 hover:text-red-500">✕</button>
+                    </span>
+                  ))}
+                  {omToUpdate.assignees.length === 0 && <p className="text-xs text-gray-400 italic">Nenhum responsável.</p>}
+                </div>
+              </div>
+
+              {/* Gestão de Setores */}
+              <div>
+                <h3 className="text-xs font-bold text-gray-600 uppercase mb-2 flex items-center border-b pb-1"><Wrench size={14} className="mr-1"/> Setores Envolvidos</h3>
+                <div className="flex space-x-2 mb-3 mt-2">
+                  <select value={manageSelectedSector} onChange={(e) => setManageSelectedSector(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
+                    <option value="">Selecione um Setor...</option>
+                    {MOCK_SECTORS.filter(s => !omToUpdate.sectors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button onClick={() => handleAddDataToOm('sector')} className="bg-slate-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-slate-700">Incluir</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {omToUpdate.sectors.map(s => (
+                    <span key={s} className="bg-gray-100 border border-gray-300 text-gray-700 text-xs px-2 py-1 rounded flex items-center">
+                      {s} <button onClick={() => handleRemoveDataFromOm(omToUpdate.id, 'sector', s)} className="ml-2 text-gray-400 hover:text-red-500">✕</button>
+                    </span>
+                  ))}
+                  {omToUpdate.sectors.length === 0 && <p className="text-xs text-gray-400 italic">Nenhum setor.</p>}
+                </div>
+              </div>
+
+              <button onClick={() => setOmToUpdate(null)} className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-bold transition-colors shadow-sm">
+                Concluir Edição
               </button>
             </div>
           </div>
