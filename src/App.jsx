@@ -19,6 +19,7 @@ export default function App() {
 
   const [currentView, setCurrentView] = useState('oms');
   const [omToFinish, setOmToFinish] = useState(null);
+  const [omToDelete, setOmToDelete] = useState(null); // Estado para exclusão
   const [expandedCards, setExpandedCards] = useState([]);
   
   const [omToUpdate, setOmToUpdate] = useState(null);
@@ -73,6 +74,17 @@ export default function App() {
   const updateOmInDatabase = async (id, updates) => {
     const { error } = await supabase.from('oms').update(updates).eq('id', id);
     if (!error) fetchOms(); 
+  };
+  
+  // Nova função para deletar direto do banco
+  const deleteOmFromDatabase = async (id) => {
+    const { error } = await supabase.from('oms').delete().eq('id', id);
+    if (!error) {
+      fetchOms();
+      setOmToDelete(null);
+    } else {
+      alert("Erro ao excluir: " + error.message);
+    }
   };
   // ---------------------------
 
@@ -292,6 +304,12 @@ export default function App() {
     });
     await updateOmInDatabase(omToFinish, { status: 'completed', timelogs: updatedLogs });
     setOmToFinish(null);
+  };
+
+  // Chama a nova função de exclusão
+  const confirmDeleteOM = () => {
+    if (!omToDelete) return;
+    deleteOmFromDatabase(omToDelete);
   };
 
   // --- Criação e Edição de OM (Com Supabase) ---
@@ -547,7 +565,7 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* NOVO: Setores com Botão de Edição */}
+                        {/* Setores com Botão de Edição e Exclusão */}
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center flex-wrap gap-1">
                             <Wrench size={14} className="mr-1 text-gray-400 flex-shrink-0" />
@@ -556,17 +574,26 @@ export default function App() {
                               <span key={s} className="bg-gray-100 px-2 py-0.5 rounded text-xs font-medium text-gray-700 border border-gray-200">{s}</span>
                             )) : <span className="text-gray-400 text-xs italic">Não definido</span>}
                           </div>
-                          {om.status !== 'completed' && (
+                          <div className="flex space-x-1 shrink-0 ml-2">
+                            {om.status !== 'completed' && (
+                              <button 
+                                onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
+                                className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors"
+                              >
+                                <Edit size={10} className="mr-1"/> Editar
+                              </button>
+                            )}
                             <button 
-                              onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
-                              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors ml-2 shrink-0"
+                              onClick={() => setOmToDelete(om.id)}
+                              className="text-[10px] font-bold text-red-600 hover:text-red-800 flex items-center bg-red-50 hover:bg-red-100 border border-red-200 px-2 py-1 rounded transition-colors"
+                              title="Excluir OM"
                             >
-                              <Edit size={10} className="mr-1"/> Editar
+                              <Trash2 size={10} />
                             </button>
-                          )}
+                          </div>
                         </div>
 
-                        {/* NOVO: Observações visíveis na tela principal */}
+                        {/* Observações visíveis na tela principal */}
                         {om.observation && (
                           <div className="mb-3 bg-amber-50 p-2.5 rounded-md border border-amber-100/50">
                             <p className="text-[10px] font-bold text-amber-800 mb-1 flex items-center uppercase">
@@ -576,7 +603,7 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* NOVO: Materiais visíveis na tela principal */}
+                        {/* Materiais visíveis na tela principal */}
                         {om.products && om.products.length > 0 && (
                           <div className="mb-4">
                             <p className="text-[10px] font-bold text-gray-500 mb-1.5 flex items-center uppercase">
@@ -676,9 +703,21 @@ export default function App() {
                           
                           {/* Colaboradores Envolvidos (Resumo de pessoas) */}
                           <div>
-                            <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center mb-2">
-                              <Users size={12} className="mr-1"/> Colaboradores Envolvidos
-                            </p>
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center">
+                                <Users size={12} className="mr-1"/> Equipe & Setores
+                              </p>
+                              <div className="flex space-x-1">
+                                {om.status !== 'completed' && (
+                                  <button 
+                                    onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
+                                    className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors"
+                                  >
+                                    <Edit size={10} className="mr-1"/> Atualizar Dados
+                                  </button>
+                                )}
+                              </div>
+                            </div>
                             <div className="bg-white p-2.5 rounded border border-gray-200 shadow-sm">
                               <div className="flex items-start">
                                 <User size={14} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
@@ -1185,7 +1224,7 @@ export default function App() {
             </div>
             <h2 className="text-xl font-bold text-gray-800 mb-2">Encerrar a OM Inteira?</h2>
             <p className="text-gray-600 mb-6 text-sm">
-              Atenção: Ao encerrar a OM, o tempo total será consolidado e qualquer pessoa da equipe que ainda estiver trabalhando terá o tempo fechado automaticamente.
+              Atenção: Ao encerrar a OM, o tempo total será consolidado permanentemente. Qualquer pessoa da equipe que ainda estiver trabalhando terá o tempo fechado automaticamente.
             </p>
             <div className="flex justify-center space-x-3">
               <button onClick={() => setOmToFinish(null)} className="px-4 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md font-bold transition-colors w-full">
@@ -1193,6 +1232,29 @@ export default function App() {
               </button>
               <button onClick={confirmFinish} className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-md font-bold transition-colors w-full">
                 Sim, Encerrar OM
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIRMAR EXCLUSÃO DA OM */}
+      {omToDelete && (
+        <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden text-center p-6">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={32} className="text-red-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">Excluir Ordem?</h2>
+            <p className="text-gray-600 mb-6 text-sm">
+              Tem certeza que deseja excluir a <strong>{omToDelete}</strong> permanentemente? Esta ação não pode ser desfeita e todos os tempos registrados serão perdidos.
+            </p>
+            <div className="flex justify-center space-x-3">
+              <button onClick={() => setOmToDelete(null)} className="px-4 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md font-bold transition-colors w-full">
+                Cancelar
+              </button>
+              <button onClick={confirmDeleteOM} className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-md font-bold transition-colors w-full">
+                Sim, Excluir
               </button>
             </div>
           </div>
