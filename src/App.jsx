@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // Mantendo a conexão com o banco!
+import { supabase } from './supabase'; // MANTENDO A NOSSA CONEXÃO!
 import { 
   Play, Pause, CheckCircle2, Clock, Plus, Wrench, User, Factory,
   Search, BarChart3, ListTodo, ChevronDown, ChevronUp, FileText,
@@ -11,7 +11,7 @@ const MOCK_WORKERS = ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro
 const MOCK_SECTORS = ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem'];
 
 export default function App() {
-  const [oms, setOms] = useState([]);
+  const [oms, setOms] = useState([]); // Iniciando vazio para puxar do Supabase
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filter, setFilter] = useState('Todas');
@@ -19,6 +19,7 @@ export default function App() {
 
   const [currentView, setCurrentView] = useState('oms');
   const [omToFinish, setOmToFinish] = useState(null);
+  const [expandedCards, setExpandedCards] = useState([]);
   
   const [omToUpdate, setOmToUpdate] = useState(null);
   const [manageSelectedWorker, setManageSelectedWorker] = useState('');
@@ -37,6 +38,7 @@ export default function App() {
   const [newCriticality, setNewCriticality] = useState('Programada');
   const [newObservation, setNewObservation] = useState('');
   const [newSector, setNewSector] = useState(MOCK_SECTORS[0]);
+  
   const [newProducts, setNewProducts] = useState([]);
   const [currentProduct, setCurrentProduct] = useState(MOCK_PRODUCTS[0]);
   const [currentQty, setCurrentQty] = useState(1);
@@ -98,6 +100,29 @@ export default function App() {
 
   const formatDate = (isoString) => new Date(isoString).toLocaleDateString('pt-BR');
 
+  const toggleCard = (id) => {
+    setExpandedCards(prev => prev.includes(id) ? prev.filter(cardId => cardId !== id) : [...prev, id]);
+  };
+
+  const getActiveTasks = (om) => {
+    const taskMap = new Map();
+    om.timeLogs.forEach((log, i) => {
+      const key = log.taskId || `${log.worker}-${log.sector}-${log.product}-${log.quantity}`;
+      if (!taskMap.has(key)) taskMap.set(key, []);
+      taskMap.get(key).push({...log, originalIndex: i});
+    });
+
+    const activeTasks = [];
+    taskMap.forEach((logs, key) => {
+       const lastLog = logs[logs.length - 1];
+       if (!lastLog.isFinished) {
+          const taskTime = logs.reduce((acc, l) => acc + (l.end ? l.end - l.start : currentTime - l.start), 0);
+          activeTasks.push({ taskId: key, ...lastLog, taskTime });
+       }
+    });
+    return activeTasks;
+  };
+
   const exportToExcel = async () => {
     try {
       if (!window.XLSX) {
@@ -110,7 +135,8 @@ export default function App() {
         });
       }
       const XLSX = window.XLSX;
-      const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Observação', 'Setor', 'Responsável', 'Produtos', 'Status', 'Tempo Executado'];
+
+      const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Observação', 'Setor', 'Responsável', 'Produtos', 'Status', 'Hora Início', 'Hora Fim', 'Tempo Executado'];
       const rows = [];
 
       oms.forEach(om => {
@@ -125,16 +151,18 @@ export default function App() {
             const logTimeMs = log.end ? (log.end - log.start) : (currentTime - log.start);
             const logTimeStr = formatTime(logTimeMs);
             const sessionProduct = log.product ? `${log.quantity}x ${log.product}` : productsStr;
+            const startTimeStr = formatClockTime(log.start);
+            const endTimeStr = log.end ? formatClockTime(log.end) : 'Rodando...';
             
             rows.push([
               om.id, date, om.title, om.objective, om.criticality, om.observation || '',
-              log.sector || '-', log.worker || '-', sessionProduct, statusPt, logTimeStr
+              log.sector || '-', log.worker || '-', sessionProduct, statusPt, startTimeStr, endTimeStr, logTimeStr
             ]);
           });
         } else {
           rows.push([
             om.id, date, om.title, om.objective, om.criticality, om.observation || '',
-            om.sectors.join(', ') || '-', om.assignees.join(', ') || '-', productsStr, statusPt, '00:00:00'
+            om.sectors.join(', ') || '-', om.assignees.join(', ') || '-', productsStr, statusPt, '-', '-', '00:00:00'
           ]);
         }
       });
@@ -153,6 +181,7 @@ export default function App() {
     }
   };
 
+  // --- Ações de Start/Pause/Resume INDIVIDUALIZADAS (Com Supabase) ---
   const handleStartClick = (id) => {
     const om = oms.find(o => o.id === id);
     setOmToStart(om);
@@ -162,9 +191,17 @@ export default function App() {
     setActionQty(1);
   };
 
-  const confirmStartAction = (e) => {
+  const confirmStartAction = async (e) => {
     e.preventDefault();
     if (!omToStart || !actionWorker || !actionSector) return;
+
+    if (actionProduct) {
+      const productInOm = omToStart.products.find(p => p.name === actionProduct);
+      if (productInOm && Number(actionQty) > productInOm.quantity) {
+        alert(`A quantidade solicitada não pode ser maior do que a estipulada na OM original (${productInOm.quantity} un).`);
+        return;
+      }
+    }
 
     const om = oms.find(o => o.id === omToStart.id);
     const newAssignees = !om.assignees.includes(actionWorker) ? [...om.assignees, actionWorker].join(', ') : om.assignees.join(', ');
@@ -176,31 +213,88 @@ export default function App() {
       worker: actionWorker, 
       sector: actionSector,
       product: actionProduct,
-      quantity: Number(actionQty)
+      quantity: Number(actionQty),
+      taskId: `task-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      isFinished: false
     }];
 
-    updateOmInDatabase(om.id, { status: 'in_progress', assignee: newAssignees, sector: newSectors, timelogs: newLogs });
+    await updateOmInDatabase(om.id, { status: 'in_progress', assignee: newAssignees, sector: newSectors, timelogs: newLogs });
     setOmToStart(null);
   };
 
-  const handlePause = (id) => {
-    const om = oms.find(o => o.id === id);
+  const handlePauseTask = async (omId, taskId) => {
+    const om = oms.find(o => o.id === omId);
     const updatedLogs = [...om.timeLogs];
-    const lastLog = updatedLogs[updatedLogs.length - 1];
-    if (lastLog && !lastLog.end) lastLog.end = Date.now();
-    updateOmInDatabase(id, { status: 'paused', timelogs: updatedLogs });
+    for (let i = updatedLogs.length - 1; i >= 0; i--) {
+      const log = updatedLogs[i];
+      const key = log.taskId || `${log.worker}-${log.sector}-${log.product}-${log.quantity}`;
+      if (key === taskId) {
+        if (!log.end) log.end = Date.now();
+        break;
+      }
+    }
+    const isSomeoneElseWorking = updatedLogs.some(log => !log.end);
+    await updateOmInDatabase(omId, { status: isSomeoneElseWorking ? 'in_progress' : 'paused', timelogs: updatedLogs });
   };
 
-  const confirmFinish = () => {
+  const handleResumeTask = async (omId, taskId) => {
+    const om = oms.find(o => o.id === omId);
+    const updatedLogs = [...om.timeLogs];
+    let lastTaskLog = null;
+    
+    for (let i = updatedLogs.length - 1; i >= 0; i--) {
+      const log = updatedLogs[i];
+      const key = log.taskId || `${log.worker}-${log.sector}-${log.product}-${log.quantity}`;
+      if (key === taskId) {
+        lastTaskLog = log;
+        break;
+      }
+    }
+
+    if (lastTaskLog) {
+      updatedLogs.push({
+        start: Date.now(),
+        end: null,
+        worker: lastTaskLog.worker,
+        sector: lastTaskLog.sector,
+        product: lastTaskLog.product,
+        quantity: lastTaskLog.quantity,
+        taskId: lastTaskLog.taskId || taskId,
+        isFinished: false
+      });
+    }
+    await updateOmInDatabase(omId, { status: 'in_progress', timelogs: updatedLogs });
+  };
+
+  const handleFinishTask = async (omId, taskId) => {
+    const om = oms.find(o => o.id === omId);
+    const updatedLogs = [...om.timeLogs];
+    for (let i = updatedLogs.length - 1; i >= 0; i--) {
+      const log = updatedLogs[i];
+      const key = log.taskId || `${log.worker}-${log.sector}-${log.product}-${log.quantity}`;
+      if (key === taskId) {
+        if (!log.end) log.end = Date.now();
+        log.isFinished = true; 
+        break;
+      }
+    }
+    const isSomeoneElseWorking = updatedLogs.some(log => !log.end);
+    await updateOmInDatabase(omId, { status: isSomeoneElseWorking ? 'in_progress' : 'paused', timelogs: updatedLogs });
+  };
+
+  const confirmFinish = async () => {
     if (!omToFinish) return;
     const om = oms.find(o => o.id === omToFinish);
-    const updatedLogs = [...om.timeLogs];
-    const lastLog = updatedLogs[updatedLogs.length - 1];
-    if (lastLog && !lastLog.end) lastLog.end = Date.now();
-    updateOmInDatabase(omToFinish, { status: 'completed', timelogs: updatedLogs });
+    const updatedLogs = om.timeLogs.map(log => {
+      const finishedLog = { ...log, isFinished: true };
+      if (!finishedLog.end) finishedLog.end = Date.now();
+      return finishedLog;
+    });
+    await updateOmInDatabase(omToFinish, { status: 'completed', timelogs: updatedLogs });
     setOmToFinish(null);
   };
 
+  // --- Criação e Edição de OM (Com Supabase) ---
   const handleAddProduct = () => {
     if (currentQty > 0) {
       const existingProduct = newProducts.find(p => p.name === currentProduct);
@@ -250,8 +344,6 @@ export default function App() {
     }
   };
 
-  // Funções de Gerenciamento da OM (Modal Atualizar)
-  // Como são atualizações diretas, usamos o banco e o fetchOms atualiza a tela
   const handleAddDataToOm = async (type) => {
     if (!omToUpdate) return;
     const om = oms.find(o => o.id === omToUpdate.id);
@@ -265,18 +357,15 @@ export default function App() {
     }
     if (type === 'product' && manageSelectedProduct && manageSelectedQty > 0) {
       const existing = om.products.find(p => p.name === manageSelectedProduct);
-      let newProducts;
       if (existing) {
-        newProducts = om.products.map(p => p.name === manageSelectedProduct ? { ...p, quantity: p.quantity + Number(manageSelectedQty) } : p);
+        updates.products = om.products.map(p => p.name === manageSelectedProduct ? { ...p, quantity: p.quantity + Number(manageSelectedQty) } : p);
       } else {
-        newProducts = [...om.products, { name: manageSelectedProduct, quantity: Number(manageSelectedQty) }];
+        updates.products = [...om.products, { name: manageSelectedProduct, quantity: Number(manageSelectedQty) }];
       }
-      updates.products = newProducts;
     }
 
     if (Object.keys(updates).length > 0) {
       await updateOmInDatabase(om.id, updates);
-      // Força a atualização do modal local para evitar fechamento
       setOmToUpdate(prev => ({...prev, ...updates, 
         assignees: updates.assignee ? updates.assignee.split(', ') : prev.assignees,
         sectors: updates.sector ? updates.sector.split(', ') : prev.sectors
@@ -312,6 +401,7 @@ export default function App() {
     setOmToUpdate(prev => ({...prev, products: newProducts}));
   };
 
+  // --- Filtros ---
   const filteredOms = oms.filter(om => {
     const searchLower = search.toLowerCase();
     const searchableText = [
@@ -329,7 +419,8 @@ export default function App() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-800 pb-12">
+      {/* Header */}
       <header className="bg-slate-900 text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-3">
@@ -366,9 +457,12 @@ export default function App() {
         </div>
       </header>
 
+      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
         {currentView === 'oms' ? (
           <>
+            {/* Controls */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
               <div className="flex items-center bg-white p-2 rounded-lg shadow-sm border border-gray-200 w-full md:w-auto">
                 <Search size={20} className="text-gray-400 ml-2" />
@@ -396,6 +490,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* OM Cards Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredOms.length === 0 ? (
                 <div className="col-span-full text-center py-12 text-gray-500 bg-white rounded-xl border border-dashed border-gray-300">
@@ -404,194 +499,282 @@ export default function App() {
               ) : (
                 filteredOms.map(om => {
                   const totalTime = calculateTotalTime(om.timeLogs);
+                  const isExpanded = expandedCards.includes(om.id);
+                  const activeTasks = getActiveTasks(om);
+                  const allSectorsToDisplay = Array.from(new Set([...om.sectors, ...om.timeLogs.map(l => l.sector).filter(Boolean)]));
+
                   return (
                     <div key={om.id} className={`bg-white rounded-xl shadow-sm border-l-4 overflow-hidden flex flex-col transition-all hover:shadow-md ${
                       om.criticality === 'Imediata' && om.status !== 'completed' ? 'border-l-red-500' : 'border-l-blue-500'
                     }`}>
-                      <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-start">
-                        <div>
+                      {/* ==== CABEÇALHO E INFORMAÇÕES PRINCIPAIS DO CARD ==== */}
+                      <div className="p-4 flex-grow flex flex-col">
+                        <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center space-x-2">
-                            <span className="text-xs font-bold text-gray-500 bg-white border border-gray-200 px-2 py-1 rounded shadow-sm">
+                            <span className="text-xs font-bold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-1 rounded shadow-sm">
                               {om.id}
                             </span>
                             <span className="text-[11px] text-gray-400 font-medium flex items-center">
                               <CalendarDays size={12} className="mr-1"/> {formatDate(om.createdAt)}
                             </span>
                           </div>
-                          <h3 className="mt-2 font-bold text-gray-800 text-lg leading-tight pr-4">
-                            {om.title}
-                          </h3>
+                          <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full whitespace-nowrap ${
+                            om.status === 'pending' ? 'bg-gray-200 text-gray-700' :
+                            om.status === 'in_progress' ? 'bg-blue-100 text-blue-800 ring-2 ring-blue-300' :
+                            om.status === 'paused' ? 'bg-orange-100 text-orange-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {om.status === 'pending' && 'Pendente'}
+                            {om.status === 'in_progress' && 'Em Andamento'}
+                            {om.status === 'paused' && 'Pausado'}
+                            {om.status === 'completed' && 'Concluído'}
+                          </span>
                         </div>
-                        <span className={`text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap ${
-                          om.status === 'pending' ? 'bg-gray-200 text-gray-700' :
-                          om.status === 'in_progress' ? 'bg-blue-100 text-blue-800 ring-2 ring-blue-300 animate-pulse' :
-                          om.status === 'paused' ? 'bg-orange-100 text-orange-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                          {om.status === 'pending' && 'Pendente'}
-                          {om.status === 'in_progress' && 'Em Andamento'}
-                          {om.status === 'paused' && 'Pausado'}
-                          {om.status === 'completed' && 'Concluído'}
-                        </span>
-                      </div>
 
-                      <div className="p-4 flex-grow space-y-4">
-                        {om.observation && (
-                          <div className="bg-amber-50 p-3 rounded-lg border border-amber-100/50">
-                            <p className="text-xs font-bold text-amber-800 mb-1 flex items-center">
-                              <AlignLeft size={14} className="mr-1"/> Observações
-                            </p>
-                            <p className="text-sm text-gray-700 italic">{om.observation}</p>
-                          </div>
-                        )}
+                        <h3 className="font-bold text-gray-800 text-lg leading-tight mb-3">
+                          {om.title}
+                        </h3>
 
-                        <div className="flex space-x-2">
-                          <span className="flex items-center text-xs font-medium bg-slate-100 text-slate-700 px-2 py-1 rounded">
+                        {/* Badges de Objetivo e Criticidade */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          <span className="flex items-center text-[11px] font-medium bg-slate-100 text-slate-700 px-2 py-1 rounded">
                             <Target size={12} className="mr-1"/> {om.objective}
                           </span>
-                          <span className={`flex items-center text-xs font-medium px-2 py-1 rounded ${
-                            om.criticality === 'Imediata' ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-blue-700'
-                          }`}>
-                            <AlertTriangle size={12} className="mr-1"/> {om.criticality}
-                          </span>
+                          {om.criticality === 'Imediata' && (
+                            <span className="flex items-center text-[11px] font-medium bg-red-100 text-red-700 px-2 py-1 rounded">
+                              <AlertTriangle size={12} className="mr-1"/> Imediata
+                            </span>
+                          )}
                         </div>
 
-                        {om.products && om.products.length > 0 && (
-                          <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
-                            <p className="text-xs font-bold text-orange-800 mb-2 flex items-center">
-                              <Package size={14} className="mr-1"/> Produtos da OM
+                        {/* NOVO: Setores com Botão de Edição */}
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center flex-wrap gap-1">
+                            <Wrench size={14} className="mr-1 text-gray-400 flex-shrink-0" />
+                            <span className="text-[11px] font-bold text-gray-500 uppercase mr-1">Setor:</span>
+                            {om.sectors.length > 0 ? om.sectors.map(s => (
+                              <span key={s} className="bg-gray-100 px-2 py-0.5 rounded text-xs font-medium text-gray-700 border border-gray-200">{s}</span>
+                            )) : <span className="text-gray-400 text-xs italic">Não definido</span>}
+                          </div>
+                          {om.status !== 'completed' && (
+                            <button 
+                              onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
+                              className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors ml-2 shrink-0"
+                            >
+                              <Edit size={10} className="mr-1"/> Editar
+                            </button>
+                          )}
+                        </div>
+
+                        {/* NOVO: Observações visíveis na tela principal */}
+                        {om.observation && (
+                          <div className="mb-3 bg-amber-50 p-2.5 rounded-md border border-amber-100/50">
+                            <p className="text-[10px] font-bold text-amber-800 mb-1 flex items-center uppercase">
+                              <AlignLeft size={12} className="mr-1"/> Observação
                             </p>
-                            <ul className="text-sm space-y-1">
-                              {om.products.map((p, i) => (
-                                <li key={i} className="flex justify-between text-gray-700 border-b border-orange-200/50 pb-1 last:border-0 last:pb-0">
-                                  <span>{p.name}</span>
-                                  <span className="font-bold bg-white px-2 rounded text-orange-600 shadow-sm">{p.quantity} un</span>
-                                </li>
-                              ))}
-                            </ul>
+                            <p className="text-xs text-gray-700">{om.observation}</p>
                           </div>
                         )}
 
-                        <div className="space-y-2">
-                          <div className="flex items-start">
-                            <Wrench size={16} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
-                            <div className="text-sm text-gray-600 flex flex-wrap gap-1">
-                              {om.sectors.length > 0 ? om.sectors.map(s => (
-                                <span key={s} className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200">{s}</span>
-                              )) : <span className="text-gray-400 italic">Nenhum setor alocado</span>}
+                        {/* NOVO: Materiais visíveis na tela principal */}
+                        {om.products && om.products.length > 0 && (
+                          <div className="mb-4">
+                            <p className="text-[10px] font-bold text-gray-500 mb-1.5 flex items-center uppercase">
+                              <Package size={12} className="mr-1"/> Materiais da OM
+                            </p>
+                            <div className="space-y-1">
+                              {om.products.map((p, i) => (
+                                <div key={i} className="flex justify-between items-center text-xs text-gray-700 bg-orange-50/50 px-2 py-1.5 rounded border border-orange-100">
+                                  <span className="font-medium truncate pr-2">{p.name}</span>
+                                  <span className="font-bold text-orange-600 shrink-0 bg-white px-1.5 py-0.5 rounded shadow-sm border border-orange-100">{p.quantity} un</span>
+                                </div>
+                              ))}
                             </div>
                           </div>
-                          
-                          <div className="flex items-start pt-1">
-                            <Users size={16} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
-                            <div className="text-sm text-gray-600 flex flex-wrap gap-1 items-center w-full">
-                              {om.assignees.length > 0 ? om.assignees.map(a => (
-                                <span key={a} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium border border-blue-100">{a}</span>
-                              )) : <span className="text-gray-400 italic">Sem responsável</span>}
-                              
-                              {om.status !== 'completed' && (
-                                <button 
-                                  onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
-                                  className="ml-auto text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center bg-white border border-slate-200 px-2 py-1 rounded shadow-sm"
-                                >
-                                  <Edit size={12} className="mr-1"/> Atualizar Dados
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
+                        )}
 
-                        {om.timeLogs.length > 0 && (
-                          <div className="mt-4 pt-4 border-t border-gray-100">
-                            <p className="text-xs font-bold text-gray-500 mb-2 uppercase">Histórico de Ações</p>
-                            <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
-                              {om.timeLogs.map((log, idx) => (
-                                <div key={idx} className="bg-white border border-gray-200 p-2 rounded text-xs text-gray-600 shadow-sm">
-                                  <div className="flex items-center text-blue-700 font-medium mb-1">
-                                    <Play size={10} className="mr-1"/> Iniciado/Retomado
+                        {/* PAINEL DE EXECUÇÃO (Tarefas da Equipe) */}
+                        {activeTasks.length > 0 && (
+                          <div className="mb-4 pt-3 border-t border-gray-100">
+                            <p className="text-[10px] font-bold text-blue-600 uppercase mb-2 flex items-center">
+                              <Play size={12} className="mr-1"/> Painel de Execução ({activeTasks.length})
+                            </p>
+                            <div className="space-y-2">
+                              {activeTasks.map(task => (
+                                <div key={task.taskId} className={`flex flex-col sm:flex-row justify-between items-start sm:items-center border p-2.5 rounded-lg shadow-sm transition-colors ${
+                                  !task.end ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+                                }`}>
+                                  <div className="flex flex-col mb-2 sm:mb-0 w-full sm:w-auto overflow-hidden">
+                                    <span className="text-xs font-bold text-gray-800 truncate">
+                                      {task.worker} <span className="text-gray-500 font-normal">({task.sector})</span>
+                                    </span>
+                                    {task.product && (
+                                      <span className={`text-[10px] font-bold mt-0.5 ${!task.end ? 'text-blue-700 animate-pulse' : 'text-gray-500'}`}>
+                                        {!task.end ? '⏳ Rodando:' : '⏸ Pausado:'} {task.quantity}x {task.product}
+                                      </span>
+                                    )}
                                   </div>
-                                  <div className="pl-3 mb-1">
-                                    {formatClockTime(log.start)} por <strong>{log.worker}</strong> ({log.sector})
-                                    {log.product && <div className="text-orange-600 mt-0.5 font-medium">↳ {log.quantity}x {log.product}</div>}
+                                  
+                                  <div className="flex space-x-1.5 w-full sm:w-auto mt-2 sm:mt-0">
+                                    {!task.end ? (
+                                      <button 
+                                        onClick={() => handlePauseTask(om.id, task.taskId)}
+                                        className="flex-1 sm:flex-none bg-orange-100 hover:bg-orange-200 text-orange-700 px-2 py-1.5 rounded text-[10px] font-bold transition-colors flex items-center justify-center"
+                                      >
+                                        <Pause size={12} className="mr-1" /> PAUSAR
+                                      </button>
+                                    ) : (
+                                      <button 
+                                        onClick={() => handleResumeTask(om.id, task.taskId)}
+                                        className="flex-1 sm:flex-none bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1.5 rounded text-[10px] font-bold transition-colors flex items-center justify-center"
+                                      >
+                                        <Play size={12} className="mr-1" /> RETOMAR
+                                      </button>
+                                    )}
+                                    <button 
+                                      onClick={() => handleFinishTask(om.id, task.taskId)}
+                                      className="flex-1 sm:flex-none bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1.5 rounded text-[10px] font-bold transition-colors flex items-center justify-center"
+                                    >
+                                      <CheckCircle2 size={12} className="mr-1" /> CONCLUIR
+                                    </button>
                                   </div>
-                                  {log.end && (
-                                    <>
-                                      <div className="flex items-center text-orange-600 font-medium mb-1 pt-1 border-t border-gray-50">
-                                        <Pause size={10} className="mr-1"/> Pausado/Finalizado
-                                      </div>
-                                      <div className="pl-3">
-                                        {formatClockTime(log.end)}
-                                      </div>
-                                    </>
-                                  )}
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
                         
-                        <div className={`mt-2 p-3 rounded-lg flex flex-col justify-center border ${
+                        {/* Timer Principal */}
+                        <div className={`mt-auto p-3 rounded-lg flex items-center justify-between border ${
                           om.status === 'in_progress' ? 'bg-slate-900 border-slate-800 text-white shadow-inner' : 'bg-gray-50 border-gray-200 text-gray-800'
                         }`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center">
-                              <Clock size={18} className={`mr-2 ${om.status === 'in_progress' ? 'text-blue-400 animate-spin-slow' : 'text-gray-500'}`} />
-                              <span className="text-sm font-bold uppercase tracking-wide">Tempo Total</span>
-                            </div>
-                            <span className="font-mono font-bold text-xl tracking-wider">
-                              {formatTime(totalTime)}
-                            </span>
+                          <div className="flex items-center">
+                            <Clock size={16} className={`mr-2 ${om.status === 'in_progress' ? 'text-blue-400 animate-spin-slow' : 'text-gray-500'}`} />
+                            <span className="text-xs font-bold uppercase tracking-wide">Tempo Total da OM</span>
                           </div>
+                          <span className="font-mono font-bold text-xl tracking-wider">
+                            {formatTime(totalTime)}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="p-4 bg-gray-50 border-t border-gray-200 flex space-x-2">
-                        {om.status === 'pending' && (
-                          <button 
-                            onClick={() => handleStartClick(om.id)}
-                            className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
-                          >
-                            <Play size={18} className="mr-2" /> INICIAR
-                          </button>
+                      {/* ==== BOTÃO DE EXPANDIR/RECOLHER DETALHES ==== */}
+                      <button 
+                        onClick={() => toggleCard(om.id)}
+                        className="w-full py-2 bg-white border-y border-gray-100 text-[11px] font-bold text-gray-400 hover:text-blue-600 hover:bg-blue-50 flex justify-center items-center transition-colors uppercase tracking-wider"
+                      >
+                        {isExpanded ? (
+                          <><ChevronUp size={14} className="mr-1"/> Ocultar Histórico Completo</>
+                        ) : (
+                          <><ChevronDown size={14} className="mr-1"/> Ver Histórico Completo</>
                         )}
+                      </button>
 
-                        {om.status === 'in_progress' && (
-                          <>
-                            <button 
-                              onClick={() => handlePause(om.id)}
-                              className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
-                            >
-                              <Pause size={18} className="mr-2" /> PAUSAR
-                            </button>
-                            <button 
-                              onClick={() => setOmToFinish(om.id)}
-                              className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
-                            >
-                              <CheckCircle2 size={18} className="mr-2" /> FINALIZAR
-                            </button>
-                          </>
-                        )}
+                      {/* ==== ÁREA DE DETALHES EXPANDÍVEL (Histórico Denso) ==== */}
+                      {isExpanded && (
+                        <div className="p-4 bg-slate-50 space-y-4 border-b border-gray-200 shadow-inner">
+                          
+                          {/* Colaboradores Envolvidos (Resumo de pessoas) */}
+                          <div>
+                            <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center mb-2">
+                              <Users size={12} className="mr-1"/> Colaboradores Envolvidos
+                            </p>
+                            <div className="bg-white p-2.5 rounded border border-gray-200 shadow-sm">
+                              <div className="flex items-start">
+                                <User size={14} className="mr-2 mt-0.5 text-gray-400 flex-shrink-0" />
+                                <div className="text-sm text-gray-600 flex flex-wrap gap-1">
+                                  {om.assignees.length > 0 ? om.assignees.map(a => (
+                                    <span key={a} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-medium border border-blue-100">{a}</span>
+                                  )) : <span className="text-gray-400 italic text-xs">Ninguém trabalhou nesta OM ainda.</span>}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
 
-                        {om.status === 'paused' && (
+                          {/* Resumo e Histórico por Setor (Tudo Integrado) */}
+                          {allSectorsToDisplay.length > 0 && (
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-500 mb-2 uppercase flex items-center">
+                                <BarChart3 size={12} className="mr-1"/> Resumo e Logs por Setor
+                              </p>
+                              <div className="space-y-3">
+                                {allSectorsToDisplay.map(sector => {
+                                  const logs = om.timeLogs.filter(l => l.sector === sector);
+                                  const sectorTime = logs.reduce((acc, l) => acc + (l.end ? l.end - l.start : currentTime - l.start), 0);
+                                  
+                                  return (
+                                    <div key={sector} className="bg-white rounded border border-gray-200 shadow-sm overflow-hidden text-sm">
+                                      {/* Cabeçalho do Setor */}
+                                      <div className="flex justify-between items-center bg-slate-100 p-2 border-b border-gray-200">
+                                        <span className="font-bold text-slate-700">{sector}</span>
+                                        <div className="text-right">
+                                          <span className="block text-[9px] text-gray-500 uppercase font-bold">Tempo Gasto</span>
+                                          <span className="font-mono font-bold text-slate-800 text-xs">{formatTime(sectorTime)}</span>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Lista de Apontamentos (Histórico deste Setor) */}
+                                      {logs.length > 0 ? (
+                                        <div className="p-2 space-y-2 bg-white">
+                                          {logs.map((log, idx) => (
+                                            <div key={idx} className={`p-2 rounded border ${
+                                              log.isFinished ? 'bg-gray-50 border-gray-200 text-gray-500 opacity-80' : 'bg-blue-50 border-blue-200 text-slate-800'
+                                            }`}>
+                                              <div className="flex justify-between items-start mb-1">
+                                                <strong className="text-xs">{log.worker}</strong>
+                                                <span className="font-mono text-[10px] text-gray-500">
+                                                  {formatClockTime(log.start)} - {log.end ? formatClockTime(log.end) : 'Agora'}
+                                                </span>
+                                              </div>
+                                              <div className="flex justify-between items-center mt-1">
+                                                {log.product ? (
+                                                  <span className={`font-bold text-[10px] ${log.isFinished ? 'text-gray-500' : 'text-orange-600'}`}>
+                                                    ↳ {log.quantity}x {log.product}
+                                                  </span>
+                                                ) : <span />}
+                                                <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                                  log.isFinished ? 'bg-gray-200 text-gray-500' : 
+                                                  (log.end ? 'bg-orange-100 text-orange-600' : 'bg-blue-200 text-blue-700')
+                                                }`}>
+                                                  {log.isFinished ? 'Concluído' : (log.end ? 'Pausado' : 'Executando')}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="p-3 text-center text-xs text-gray-400 italic">Nenhum apontamento feito.</div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ==== BOTÕES DE AÇÃO PRINCIPAIS (Fixos no rodapé) ==== */}
+                      <div className="p-4 bg-white flex space-x-2 border-t border-gray-100">
+                        {om.status !== 'completed' ? (
                           <>
                             <button 
                               onClick={() => handleStartClick(om.id)}
-                              className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
+                              className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm text-xs"
                             >
-                              <Play size={18} className="mr-2" /> RETOMAR
+                              <Plus size={16} className="mr-2" /> NOVO TRABALHO
                             </button>
                             <button 
                               onClick={() => setOmToFinish(om.id)}
-                              className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-md font-bold flex justify-center items-center transition-all shadow-sm"
+                              className="flex-none bg-red-100 hover:bg-red-200 text-red-700 py-2.5 px-4 rounded-md font-bold flex justify-center items-center transition-all shadow-sm text-xs"
+                              title="Encerrar OM inteira"
                             >
-                              <CheckCircle2 size={18} className="mr-2" /> FINALIZAR
+                              <CheckCircle2 size={16} /> ENCERRAR OM
                             </button>
                           </>
-                        )}
-
-                        {om.status === 'completed' && (
-                          <div className="w-full text-center text-sm font-bold text-slate-500 flex items-center justify-center py-2 bg-gray-100 rounded-md">
-                            <CheckCircle2 size={18} className="mr-2" /> PRODUÇÃO FINALIZADA
+                        ) : (
+                          <div className="w-full text-center text-xs font-bold text-slate-500 flex items-center justify-center py-2.5 bg-gray-50 rounded-md border border-gray-200">
+                            <CheckCircle2 size={16} className="mr-2" /> OM ENCERRADA
                           </div>
                         )}
                       </div>
@@ -602,6 +785,7 @@ export default function App() {
             </div>
           </>
         ) : (
+          /* --- DASHBOARD VIEW --- */
           <div className="space-y-6 animate-in fade-in duration-500">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
               <BarChart3 className="mr-3 text-orange-500" /> Visão Geral da Produção
@@ -634,6 +818,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Relatório Detalhado */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-8">
               <div className="p-6 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center">
@@ -812,17 +997,17 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: INICIAR / RETOMAR OM (Identificação de Usuário/Setor) */}
+      {/* MODAL: INICIAR / RETOMAR OM */}
       {omToStart && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
-            <div className="bg-blue-600 text-white p-4 flex items-center shrink-0">
-              <Play className="mr-2" size={20}/>
-              <h2 className="text-lg font-bold">{omToStart.status === 'paused' ? 'Retomar Produção' : 'Iniciar Produção'}</h2>
+            <div className="bg-slate-800 text-white p-4 flex items-center shrink-0">
+              <Plus className="mr-2" size={20}/>
+              <h2 className="text-lg font-bold">Iniciar Novo Trabalho</h2>
             </div>
             <form onSubmit={confirmStartAction} className="p-6 space-y-4">
               <p className="text-sm text-gray-600 mb-4">
-                Para prosseguir com a OM <strong>{omToStart.id}</strong>, informe seus dados para o registro de tempo:
+                Informe seus dados para registrar o tempo na OM <strong>{omToStart.id}</strong>:
               </p>
 
               <div>
@@ -844,15 +1029,37 @@ export default function App() {
               {omToStart.products && omToStart.products.length > 0 && (
                 <div className="flex space-x-2 bg-orange-50 p-3 rounded-lg border border-orange-100 mt-2">
                   <div className="flex-grow">
-                    <label className="block text-xs font-bold text-orange-800 uppercase mb-1">Produto Alvo (Sessão)</label>
-                    <select value={actionProduct} onChange={(e) => setActionProduct(e.target.value)} className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm bg-white">
+                    <label className="block text-xs font-bold text-orange-800 uppercase mb-1">Produto Alvo</label>
+                    <select 
+                      value={actionProduct} 
+                      onChange={(e) => {
+                        setActionProduct(e.target.value);
+                        setActionQty(1); 
+                      }} 
+                      className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm bg-white"
+                    >
                       <option value="">Nenhum específico</option>
                       {omToStart.products.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
                     </select>
                   </div>
                   <div className="w-24">
                     <label className="block text-xs font-bold text-orange-800 uppercase mb-1">Qtd</label>
-                    <input type="number" min="1" value={actionQty} onChange={(e) => setActionQty(e.target.value)} className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm" />
+                    <input 
+                      type="number" 
+                      min="1" 
+                      max={omToStart.products.find(p => p.name === actionProduct)?.quantity || 1}
+                      value={actionQty} 
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        const maxAllow = omToStart.products.find(p => p.name === actionProduct)?.quantity || 1;
+                        if (val > maxAllow) {
+                          setActionQty(maxAllow);
+                        } else {
+                          setActionQty(e.target.value);
+                        }
+                      }} 
+                      className="w-full border border-orange-200 rounded p-2 outline-none focus:border-orange-500 text-sm" 
+                    />
                   </div>
                 </div>
               )}
@@ -866,7 +1073,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: ATUALIZAR DADOS DA OM (Setores, Pessoas, Quantidades) */}
+      {/* MODAL: ATUALIZAR DADOS DA OM */}
       {omToUpdate && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
@@ -959,23 +1166,23 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: CONFIRMAR FINALIZAÇÃO */}
+      {/* MODAL: CONFIRMAR FINALIZAÇÃO DA OM */}
       {omToFinish && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden text-center p-6">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 size={32} className="text-green-600" />
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle2 size={32} className="text-red-600" />
             </div>
-            <h2 className="text-xl font-bold text-gray-800 mb-2">Finalizar Produção?</h2>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">Encerrar a OM Inteira?</h2>
             <p className="text-gray-600 mb-6 text-sm">
-              Tem certeza que deseja finalizar esta Ordem? O tempo total será consolidado permanentemente.
+              Atenção: Ao encerrar a OM, o tempo total será consolidado e qualquer pessoa da equipe que ainda estiver trabalhando terá o tempo fechado automaticamente.
             </p>
             <div className="flex justify-center space-x-3">
               <button onClick={() => setOmToFinish(null)} className="px-4 py-2.5 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md font-bold transition-colors w-full">
                 Cancelar
               </button>
-              <button onClick={confirmFinish} className="px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-md font-bold transition-colors w-full">
-                Sim, Finalizar
+              <button onClick={confirmFinish} className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-md font-bold transition-colors w-full">
+                Sim, Encerrar OM
               </button>
             </div>
           </div>
