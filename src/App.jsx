@@ -1,38 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from './supabase'; // <-- NOSSA CONEXÃO REAL ESTÁ DE VOLTA AQUI!
+import { supabase } from './supabase'; // CONEXÃO REAL MANTIDA
 import { 
   Play, Pause, CheckCircle2, Clock, Plus, Wrench, User, Factory,
   Search, BarChart3, ListTodo, ChevronDown, ChevronUp, FileText,
   CalendarDays, AlertTriangle, Package, Settings, Users, ArrowRightLeft, Target, Trash2, Download, AlignLeft, Edit, Upload, FileSpreadsheet
 } from 'lucide-react';
 
+const MOCK_PRODUCTS = ['Escora Metálica 3m', 'Escora Metálica 4m', 'Andaime Tubular 1x1.5m', 'Forcado Duplo', 'Sapata Ajustável', 'Tubo 6m', 'Abraçadeira Fixa', 'Plataforma Metálica'];
+const MOCK_WORKERS = ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro', 'Marcos Paulo', 'Lucas Lima'];
+const MOCK_SECTORS = ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem'];
+
 export default function App() {
-  const [oms, setOms] = useState([]); // Vazio para puxar do Supabase
+  const [oms, setOms] = useState([]); 
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [filter, setFilter] = useState('Todas');
   const [search, setSearch] = useState('');
 
-  const [currentView, setCurrentView] = useState('oms'); // 'oms', 'dashboard', 'settings'
+  const [currentView, setCurrentView] = useState('oms'); 
   const [omToFinish, setOmToFinish] = useState(null);
-  const [omToDelete, setOmToDelete] = useState(null);
+  const [omToDelete, setOmToDelete] = useState(null); 
   const [expandedCards, setExpandedCards] = useState([]);
   
-  // --- ESTADOS DE CONFIGURAÇÃO (Listas Dinâmicas) ---
-  const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('sys_products')) || ['Escora Metálica 3m', 'Escora Metálica 4m', 'Andaime Tubular 1x1.5m', 'Forcado Duplo', 'Sapata Ajustável', 'Tubo 6m', 'Abraçadeira Fixa', 'Plataforma Metálica']);
-  const [workers, setWorkers] = useState(() => JSON.parse(localStorage.getItem('sys_workers')) || ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro', 'Marcos Paulo', 'Lucas Lima']);
-  const [sectors, setSectors] = useState(() => JSON.parse(localStorage.getItem('sys_sectors')) || ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem']);
+  // --- ESTADOS DE CONFIGURAÇÃO (Agora puxados do banco) ---
+  const [products, setProducts] = useState([]);
+  const [workers, setWorkers] = useState([]);
+  const [sectors, setSectors] = useState([]);
 
   // Inputs da aba de configurações
   const [newProductInput, setNewProductInput] = useState('');
   const [newWorkerInput, setNewWorkerInput] = useState('');
   const [newSectorInput, setNewSectorInput] = useState('');
-  const fileInputRef = useRef(null); // Referência para o input de arquivo oculto
-
-  // Salva as configurações localmente sempre que mudarem
-  useEffect(() => { localStorage.setItem('sys_products', JSON.stringify(products)); }, [products]);
-  useEffect(() => { localStorage.setItem('sys_workers', JSON.stringify(workers)); }, [workers]);
-  useEffect(() => { localStorage.setItem('sys_sectors', JSON.stringify(sectors)); }, [sectors]);
+  const fileInputRef = useRef(null); 
 
   // Update/Manage OM State
   const [omToUpdate, setOmToUpdate] = useState(null);
@@ -41,31 +40,52 @@ export default function App() {
   const [manageSelectedProduct, setManageSelectedProduct] = useState('');
   const [manageSelectedQty, setManageSelectedQty] = useState(1);
 
-  // States for Start/Resume Action
   const [omToStart, setOmToStart] = useState(null);
   const [actionWorker, setActionWorker] = useState('');
   const [actionSector, setActionSector] = useState('');
   const [actionProduct, setActionProduct] = useState('');
   const [actionQty, setActionQty] = useState(1);
 
-  // States para Nova OM
   const [newTitle, setNewTitle] = useState('');
   const [newObjective, setNewObjective] = useState('Manutenção');
   const [newCriticality, setNewCriticality] = useState('Programada');
   const [newObservation, setNewObservation] = useState('');
   const [newSector, setNewSector] = useState('');
   
-  // States para Produtos da Nova OM
   const [newProducts, setNewProducts] = useState([]);
   const [currentProduct, setCurrentProduct] = useState('');
   const [currentQty, setCurrentQty] = useState(1);
 
-  // --- INTEGRAÇÃO SUPABASE ---
+  // --- INTEGRAÇÃO SUPABASE (Lendo OMs e Configurações) ---
   useEffect(() => {
     fetchOms();
+    fetchSettings();
     const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Busca as configurações globais do sistema
+  const fetchSettings = async () => {
+    const { data, error } = await supabase.from('settings').select('*').eq('id', 1).single();
+    if (data) {
+      setProducts(data.products || []);
+      setSectors(data.sectors || []);
+      setWorkers(data.workers || []);
+    } else {
+      // Se a tabela for nova e estiver vazia, carrega uma lista inicial padrão para ajudar
+      setProducts(MOCK_PRODUCTS);
+      setSectors(MOCK_SECTORS);
+      setWorkers(MOCK_WORKERS);
+    }
+  };
+
+  // Salva as configurações globais no Supabase
+  const saveSettingsToSupabase = async (newProducts, newSectors, newWorkers) => {
+    const { error } = await supabase.from('settings').upsert([
+      { id: 1, products: newProducts, sectors: newSectors, workers: newWorkers }
+    ]);
+    if (error) console.error("Erro ao salvar configurações na nuvem:", error);
+  };
 
   const fetchOms = async () => {
     const { data, error } = await supabase.from('oms').select('*').order('createdat', { ascending: false });
@@ -150,7 +170,6 @@ export default function App() {
     return activeTasks;
   };
 
-  // Carrega dinamicamente a biblioteca XLSX
   const loadXlsxLibrary = async () => {
     if (!window.XLSX) {
       await new Promise((resolve, reject) => {
@@ -167,7 +186,6 @@ export default function App() {
   const exportToExcel = async () => {
     try {
       const XLSX = await loadXlsxLibrary();
-
       const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Observação', 'Setor', 'Responsável', 'Produtos', 'Status', 'Hora Início', 'Hora Fim', 'Tempo Executado'];
       const rows = [];
 
@@ -213,7 +231,6 @@ export default function App() {
     }
   };
 
-  // --- Ações de Start/Pause/Resume INDIVIDUALIZADAS (Com Supabase) ---
   const handleStartClick = (id) => {
     const om = oms.find(o => o.id === id);
     setOmToStart(om);
@@ -333,24 +350,40 @@ export default function App() {
 
   // --- Funções de Configurações (Settings) e Importação/Exportação ---
   const handleAddSettingItem = (type) => {
+    let updatedP = [...products];
+    let updatedS = [...sectors];
+    let updatedW = [...workers];
+
     if (type === 'product' && newProductInput.trim() && !products.includes(newProductInput.trim())) {
-      setProducts([...products, newProductInput.trim()]);
+      updatedP.push(newProductInput.trim());
+      setProducts(updatedP);
       setNewProductInput('');
     }
     if (type === 'worker' && newWorkerInput.trim() && !workers.includes(newWorkerInput.trim())) {
-      setWorkers([...workers, newWorkerInput.trim()]);
+      updatedW.push(newWorkerInput.trim());
+      setWorkers(updatedW);
       setNewWorkerInput('');
     }
     if (type === 'sector' && newSectorInput.trim() && !sectors.includes(newSectorInput.trim())) {
-      setSectors([...sectors, newSectorInput.trim()]);
+      updatedS.push(newSectorInput.trim());
+      setSectors(updatedS);
       setNewSectorInput('');
     }
+    // Salva na nuvem instantaneamente
+    saveSettingsToSupabase(updatedP, updatedS, updatedW);
   };
 
   const handleRemoveSettingItem = (type, item) => {
-    if (type === 'product') setProducts(products.filter(p => p !== item));
-    if (type === 'worker') setWorkers(workers.filter(w => w !== item));
-    if (type === 'sector') setSectors(sectors.filter(s => s !== item));
+    let updatedP = [...products];
+    let updatedS = [...sectors];
+    let updatedW = [...workers];
+
+    if (type === 'product') { updatedP = updatedP.filter(p => p !== item); setProducts(updatedP); }
+    if (type === 'worker') { updatedW = updatedW.filter(w => w !== item); setWorkers(updatedW); }
+    if (type === 'sector') { updatedS = updatedS.filter(s => s !== item); setSectors(updatedS); }
+
+    // Salva na nuvem instantaneamente
+    saveSettingsToSupabase(updatedP, updatedS, updatedW);
   };
 
   const downloadSettingsTemplate = async () => {
@@ -393,22 +426,28 @@ export default function App() {
         let importedWorkers = [];
 
         data.forEach(row => {
-          if (row['Produtos']) importedProducts.push(String(row['Produtos']).trim());
-          if (row['Setores']) importedSectors.push(String(row['Setores']).trim());
-          if (row['Colaboradores']) importedWorkers.push(String(row['Colaboradores']).trim());
+          const prod = row['Produtos'] || row['Produto'] || row[' Produtos '];
+          const sec = row['Setores'] || row['Setor'] || row[' Setores '];
+          const work = row['Colaboradores'] || row['Colaborador'] || row[' Colaboradores '];
+
+          if (prod && String(prod).trim() !== '') importedProducts.push(String(prod).trim());
+          if (sec && String(sec).trim() !== '') importedSectors.push(String(sec).trim());
+          if (work && String(work).trim() !== '') importedWorkers.push(String(work).trim());
         });
 
-        if (importedProducts.length > 0) {
-          setProducts(prev => [...new Set([...prev, ...importedProducts])]);
-        }
-        if (importedSectors.length > 0) {
-          setSectors(prev => [...new Set([...prev, ...importedSectors])]);
-        }
-        if (importedWorkers.length > 0) {
-          setWorkers(prev => [...new Set([...prev, ...importedWorkers])]);
-        }
+        // Faz o merge das listas antigas com as novas (sem duplicar)
+        const finalProducts = [...new Set([...products, ...importedProducts])];
+        const finalSectors = [...new Set([...sectors, ...importedSectors])];
+        const finalWorkers = [...new Set([...workers, ...importedWorkers])];
 
-        alert("Dados importados com sucesso!");
+        setProducts(finalProducts);
+        setSectors(finalSectors);
+        setWorkers(finalWorkers);
+
+        // Manda o pacote novo para o Supabase!
+        saveSettingsToSupabase(finalProducts, finalSectors, finalWorkers);
+
+        alert(`Importação concluída com sucesso!\n\nSalvo na nuvem:\n- ${importedProducts.length} novos Produtos\n- ${importedSectors.length} novos Setores\n- ${importedWorkers.length} novos Colaboradores`);
         if(fileInputRef.current) fileInputRef.current.value = '';
       };
       
@@ -526,7 +565,6 @@ export default function App() {
     setOmToUpdate(prev => ({...prev, products: newProducts}));
   };
 
-  // --- Filtros ---
   const filteredOms = oms.filter(om => {
     const searchLower = search.toLowerCase();
     const searchableText = [
@@ -545,7 +583,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-800 pb-12">
-      {/* Header */}
       <header className="bg-slate-900 text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-3">
@@ -592,12 +629,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
         {currentView === 'oms' ? (
           <>
-            {/* Controls */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 space-y-4 md:space-y-0">
               <div className="flex items-center bg-white p-2 rounded-lg shadow-sm border border-gray-200 w-full md:w-auto">
                 <Search size={20} className="text-gray-400 ml-2" />
@@ -625,7 +659,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* OM Cards Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredOms.length === 0 ? (
                 <div className="col-span-full text-center py-12 text-gray-500 bg-white rounded-xl border border-dashed border-gray-300">
@@ -642,7 +675,6 @@ export default function App() {
                     <div key={om.id} className={`bg-white rounded-xl shadow-sm border-l-4 overflow-hidden flex flex-col transition-all hover:shadow-md ${
                       om.criticality === 'Imediata' && om.status !== 'completed' ? 'border-l-red-500' : 'border-l-blue-500'
                     }`}>
-                      {/* ==== CABEÇALHO E INFORMAÇÕES PRINCIPAIS DO CARD ==== */}
                       <div className="p-4 flex-grow flex flex-col">
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center space-x-2">
@@ -670,7 +702,6 @@ export default function App() {
                           {om.title}
                         </h3>
 
-                        {/* Badges de Objetivo e Criticidade */}
                         <div className="flex flex-wrap gap-2 mb-3">
                           <span className="flex items-center text-[11px] font-medium bg-slate-100 text-slate-700 px-2 py-1 rounded">
                             <Target size={12} className="mr-1"/> {om.objective}
@@ -682,7 +713,6 @@ export default function App() {
                           )}
                         </div>
 
-                        {/* Setores com Botão de Edição e Exclusão */}
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center flex-wrap gap-1">
                             <Wrench size={14} className="mr-1 text-gray-400 flex-shrink-0" />
@@ -716,7 +746,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Observações visíveis na tela principal */}
                         {om.observation && (
                           <div className="mb-3 bg-amber-50 p-2.5 rounded-md border border-amber-100/50">
                             <p className="text-[10px] font-bold text-amber-800 mb-1 flex items-center uppercase">
@@ -726,7 +755,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Materiais visíveis na tela principal */}
                         {om.products && om.products.length > 0 && (
                           <div className="mb-4">
                             <p className="text-[10px] font-bold text-gray-500 mb-1.5 flex items-center uppercase">
@@ -743,7 +771,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* PAINEL DE EXECUÇÃO (Tarefas da Equipe) */}
                         {activeTasks.length > 0 && (
                           <div className="mb-4 pt-3 border-t border-gray-100">
                             <p className="text-[10px] font-bold text-blue-600 uppercase mb-2 flex items-center">
@@ -794,7 +821,6 @@ export default function App() {
                           </div>
                         )}
                         
-                        {/* Timer Principal */}
                         <div className={`mt-auto p-3 rounded-lg flex items-center justify-between border ${
                           om.status === 'in_progress' ? 'bg-slate-900 border-slate-800 text-white shadow-inner' : 'bg-gray-50 border-gray-200 text-gray-800'
                         }`}>
@@ -808,7 +834,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* ==== BOTÃO DE EXPANDIR/RECOLHER DETALHES ==== */}
                       <button 
                         onClick={() => toggleCard(om.id)}
                         className="w-full py-2 bg-white border-y border-gray-100 text-[11px] font-bold text-gray-400 hover:text-blue-600 hover:bg-blue-50 flex justify-center items-center transition-colors uppercase tracking-wider"
@@ -820,16 +845,30 @@ export default function App() {
                         )}
                       </button>
 
-                      {/* ==== ÁREA DE DETALHES EXPANDÍVEL (Histórico Denso) ==== */}
                       {isExpanded && (
                         <div className="p-4 bg-slate-50 space-y-4 border-b border-gray-200 shadow-inner">
                           
-                          {/* Colaboradores Envolvidos (Resumo de pessoas) */}
                           <div>
                             <div className="flex items-center justify-between mb-2">
                               <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center">
                                 <Users size={12} className="mr-1"/> Equipe Envolvida Historicamente
                               </p>
+                              <div className="flex space-x-1">
+                                {om.status !== 'completed' && (
+                                  <button 
+                                    onClick={() => { 
+                                      setManageSelectedProduct(products[0] || '');
+                                      setManageSelectedSector(sectors[0] || '');
+                                      setManageSelectedWorker(workers[0] || '');
+                                      setOmToUpdate(om); 
+                                      setIsModalOpen(false); 
+                                    }}
+                                    className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors"
+                                  >
+                                    <Edit size={10} className="mr-1"/> Atualizar Dados
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             <div className="bg-white p-2.5 rounded border border-gray-200 shadow-sm">
                               <div className="flex items-start">
@@ -843,7 +882,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Resumo e Histórico por Setor (Tudo Integrado) */}
                           {allSectorsToDisplay.length > 0 && (
                             <div>
                               <p className="text-[11px] font-bold text-gray-500 mb-2 uppercase flex items-center">
@@ -856,7 +894,6 @@ export default function App() {
                                   
                                   return (
                                     <div key={sector} className="bg-white rounded border border-gray-200 shadow-sm overflow-hidden text-sm">
-                                      {/* Cabeçalho do Setor */}
                                       <div className="flex justify-between items-center bg-slate-100 p-2 border-b border-gray-200">
                                         <span className="font-bold text-slate-700">{sector}</span>
                                         <div className="text-right">
@@ -865,7 +902,6 @@ export default function App() {
                                         </div>
                                       </div>
                                       
-                                      {/* Lista de Apontamentos (Histórico deste Setor) */}
                                       {logs.length > 0 ? (
                                         <div className="p-2 space-y-2 bg-white">
                                           {logs.map((log, idx) => (
@@ -906,7 +942,6 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* ==== BOTÕES DE AÇÃO PRINCIPAIS (Fixos no rodapé) ==== */}
                       <div className="p-4 bg-white flex space-x-2 border-t border-gray-100">
                         {om.status !== 'completed' ? (
                           <>
@@ -947,7 +982,6 @@ export default function App() {
             </div>
           </>
         ) : currentView === 'dashboard' ? (
-          /* --- DASHBOARD VIEW --- */
           <div className="space-y-6 animate-in fade-in duration-500">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
               <BarChart3 className="mr-3 text-orange-500" /> Visão Geral da Produção
@@ -980,7 +1014,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Relatório Detalhado */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-8">
               <div className="p-6 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center">
@@ -1056,13 +1089,11 @@ export default function App() {
             </div>
           </div>
         ) : (
-          /* --- CONFIGURAÇÕES VIEW --- */
           <div className="space-y-6 animate-in fade-in duration-500">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
               <Settings className="mr-3 text-orange-500" /> Configurações do Sistema
             </h2>
             
-            {/* Bloco de Importação em Lote */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 border-l-4 border-l-green-500">
               <h3 className="font-bold text-gray-800 mb-2 flex items-center">
                 <FileSpreadsheet className="mr-2 text-green-600" size={20}/> Importação em Lote
@@ -1094,7 +1125,6 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Box: Equipamentos / Produtos */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Package className="mr-2 text-orange-500" size={18}/> Equipamentos / Produtos</h3>
                 <div className="flex mb-4">
@@ -1118,7 +1148,6 @@ export default function App() {
                 </ul>
               </div>
 
-              {/* Box: Setores */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Wrench className="mr-2 text-blue-500" size={18}/> Setores Operacionais</h3>
                 <div className="flex mb-4">
@@ -1142,7 +1171,6 @@ export default function App() {
                 </ul>
               </div>
 
-              {/* Box: Colaboradores */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                 <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Users className="mr-2 text-green-500" size={18}/> Colaboradores</h3>
                 <div className="flex mb-4">
@@ -1182,7 +1210,6 @@ export default function App() {
             
             <form onSubmit={handleCreateOM} className="p-6 overflow-y-auto space-y-6">
               
-              {/* Linha 1: Titulo e Objetivo */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Título / Descrição Geral</label>
@@ -1200,7 +1227,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Linha 2: Criticidade, Setor (Sem responsável) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Criticidade</label>
@@ -1217,7 +1243,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Linha 3: Observações */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Observações Adicionais</label>
                 <textarea 
@@ -1228,7 +1253,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Linha 4: Gestão de Produtos */}
               <div className="border border-orange-200 rounded-lg overflow-hidden">
                 <div className="bg-orange-50 p-3 border-b border-orange-200 flex items-center">
                   <Package className="text-orange-600 mr-2" size={18}/>
@@ -1245,7 +1269,6 @@ export default function App() {
                     </button>
                   </div>
                   
-                  {/* Lista de Produtos Adicionados */}
                   {newProducts.length > 0 ? (
                     <div className="bg-white border border-gray-200 rounded-md overflow-hidden">
                       {newProducts.map((prod, idx) => (
@@ -1277,7 +1300,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: INICIAR / RETOMAR OM (Identificação de Usuário/Setor) */}
+      {/* MODAL: INICIAR / RETOMAR OM */}
       {omToStart && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
@@ -1353,7 +1376,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: ATUALIZAR DADOS DA OM (Setores, Pessoas, Quantidades) */}
+      {/* MODAL: ATUALIZAR DADOS DA OM */}
       {omToUpdate && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
