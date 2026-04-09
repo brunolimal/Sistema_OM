@@ -1,14 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // MANTENDO A CONEXÃO COM O SUPABASE
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from './supabase'; // <-- NOSSA CONEXÃO REAL ESTÁ DE VOLTA AQUI!
 import { 
   Play, Pause, CheckCircle2, Clock, Plus, Wrench, User, Factory,
   Search, BarChart3, ListTodo, ChevronDown, ChevronUp, FileText,
-  CalendarDays, AlertTriangle, Package, Settings, Users, ArrowRightLeft, Target, Trash2, Download, AlignLeft, Edit
+  CalendarDays, AlertTriangle, Package, Settings, Users, ArrowRightLeft, Target, Trash2, Download, AlignLeft, Edit, Upload, FileSpreadsheet
 } from 'lucide-react';
-
-const MOCK_PRODUCTS = ['Escora Metálica 3m', 'Escora Metálica 4m', 'Andaime Tubular 1x1.5m', 'Forcado Duplo', 'Sapata Ajustável', 'Tubo 6m', 'Abraçadeira Fixa', 'Plataforma Metálica'];
-const MOCK_WORKERS = ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro', 'Marcos Paulo', 'Lucas Lima'];
-const MOCK_SECTORS = ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem'];
 
 export default function App() {
   const [oms, setOms] = useState([]); // Vazio para puxar do Supabase
@@ -17,31 +13,51 @@ export default function App() {
   const [filter, setFilter] = useState('Todas');
   const [search, setSearch] = useState('');
 
-  const [currentView, setCurrentView] = useState('oms');
+  const [currentView, setCurrentView] = useState('oms'); // 'oms', 'dashboard', 'settings'
   const [omToFinish, setOmToFinish] = useState(null);
-  const [omToDelete, setOmToDelete] = useState(null); // Estado para exclusão
+  const [omToDelete, setOmToDelete] = useState(null);
   const [expandedCards, setExpandedCards] = useState([]);
   
+  // --- ESTADOS DE CONFIGURAÇÃO (Listas Dinâmicas) ---
+  const [products, setProducts] = useState(() => JSON.parse(localStorage.getItem('sys_products')) || ['Escora Metálica 3m', 'Escora Metálica 4m', 'Andaime Tubular 1x1.5m', 'Forcado Duplo', 'Sapata Ajustável', 'Tubo 6m', 'Abraçadeira Fixa', 'Plataforma Metálica']);
+  const [workers, setWorkers] = useState(() => JSON.parse(localStorage.getItem('sys_workers')) || ['Carlos Silva', 'Roberto Gomes', 'Ana Costa', 'João Pedro', 'Marcos Paulo', 'Lucas Lima']);
+  const [sectors, setSectors] = useState(() => JSON.parse(localStorage.getItem('sys_sectors')) || ['Soldagem', 'Pintura', 'Mecânica', 'Montagem', 'Manutenção Geral', 'Usinagem']);
+
+  // Inputs da aba de configurações
+  const [newProductInput, setNewProductInput] = useState('');
+  const [newWorkerInput, setNewWorkerInput] = useState('');
+  const [newSectorInput, setNewSectorInput] = useState('');
+  const fileInputRef = useRef(null); // Referência para o input de arquivo oculto
+
+  // Salva as configurações localmente sempre que mudarem
+  useEffect(() => { localStorage.setItem('sys_products', JSON.stringify(products)); }, [products]);
+  useEffect(() => { localStorage.setItem('sys_workers', JSON.stringify(workers)); }, [workers]);
+  useEffect(() => { localStorage.setItem('sys_sectors', JSON.stringify(sectors)); }, [sectors]);
+
+  // Update/Manage OM State
   const [omToUpdate, setOmToUpdate] = useState(null);
   const [manageSelectedWorker, setManageSelectedWorker] = useState('');
   const [manageSelectedSector, setManageSelectedSector] = useState('');
-  const [manageSelectedProduct, setManageSelectedProduct] = useState(MOCK_PRODUCTS[0]);
+  const [manageSelectedProduct, setManageSelectedProduct] = useState('');
   const [manageSelectedQty, setManageSelectedQty] = useState(1);
 
+  // States for Start/Resume Action
   const [omToStart, setOmToStart] = useState(null);
   const [actionWorker, setActionWorker] = useState('');
   const [actionSector, setActionSector] = useState('');
   const [actionProduct, setActionProduct] = useState('');
   const [actionQty, setActionQty] = useState(1);
 
+  // States para Nova OM
   const [newTitle, setNewTitle] = useState('');
   const [newObjective, setNewObjective] = useState('Manutenção');
   const [newCriticality, setNewCriticality] = useState('Programada');
   const [newObservation, setNewObservation] = useState('');
-  const [newSector, setNewSector] = useState(MOCK_SECTORS[0]);
+  const [newSector, setNewSector] = useState('');
   
+  // States para Produtos da Nova OM
   const [newProducts, setNewProducts] = useState([]);
-  const [currentProduct, setCurrentProduct] = useState(MOCK_PRODUCTS[0]);
+  const [currentProduct, setCurrentProduct] = useState('');
   const [currentQty, setCurrentQty] = useState(1);
 
   // --- INTEGRAÇÃO SUPABASE ---
@@ -76,7 +92,6 @@ export default function App() {
     if (!error) fetchOms(); 
   };
   
-  // Nova função para deletar direto do banco
   const deleteOmFromDatabase = async (id) => {
     const { error } = await supabase.from('oms').delete().eq('id', id);
     if (!error) {
@@ -135,18 +150,23 @@ export default function App() {
     return activeTasks;
   };
 
+  // Carrega dinamicamente a biblioteca XLSX
+  const loadXlsxLibrary = async () => {
+    if (!window.XLSX) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Falha ao carregar a biblioteca Excel'));
+        document.head.appendChild(script);
+      });
+    }
+    return window.XLSX;
+  };
+
   const exportToExcel = async () => {
     try {
-      if (!window.XLSX) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-          script.onload = resolve;
-          script.onerror = () => reject(new Error('Falha ao carregar a biblioteca Excel'));
-          document.head.appendChild(script);
-        });
-      }
-      const XLSX = window.XLSX;
+      const XLSX = await loadXlsxLibrary();
 
       const headers = ['Código', 'Data Criação', 'Descrição', 'Objetivo', 'Criticidade', 'Observação', 'Setor', 'Responsável', 'Produtos', 'Status', 'Hora Início', 'Hora Fim', 'Tempo Executado'];
       const rows = [];
@@ -197,8 +217,8 @@ export default function App() {
   const handleStartClick = (id) => {
     const om = oms.find(o => o.id === id);
     setOmToStart(om);
-    setActionWorker('');
-    setActionSector('');
+    setActionWorker(workers[0] || '');
+    setActionSector(sectors[0] || '');
     setActionProduct(om.products && om.products.length > 0 ? om.products[0].name : '');
     setActionQty(1);
   };
@@ -306,15 +326,102 @@ export default function App() {
     setOmToFinish(null);
   };
 
-  // Chama a nova função de exclusão
   const confirmDeleteOM = () => {
     if (!omToDelete) return;
     deleteOmFromDatabase(omToDelete);
   };
 
+  // --- Funções de Configurações (Settings) e Importação/Exportação ---
+  const handleAddSettingItem = (type) => {
+    if (type === 'product' && newProductInput.trim() && !products.includes(newProductInput.trim())) {
+      setProducts([...products, newProductInput.trim()]);
+      setNewProductInput('');
+    }
+    if (type === 'worker' && newWorkerInput.trim() && !workers.includes(newWorkerInput.trim())) {
+      setWorkers([...workers, newWorkerInput.trim()]);
+      setNewWorkerInput('');
+    }
+    if (type === 'sector' && newSectorInput.trim() && !sectors.includes(newSectorInput.trim())) {
+      setSectors([...sectors, newSectorInput.trim()]);
+      setNewSectorInput('');
+    }
+  };
+
+  const handleRemoveSettingItem = (type, item) => {
+    if (type === 'product') setProducts(products.filter(p => p !== item));
+    if (type === 'worker') setWorkers(workers.filter(w => w !== item));
+    if (type === 'sector') setSectors(sectors.filter(s => s !== item));
+  };
+
+  const downloadSettingsTemplate = async () => {
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const headers = ['Produtos', 'Setores', 'Colaboradores'];
+      const rows = [
+        ['Escora Exemplo 3m', 'Soldagem', 'João Exemplo'],
+        ['Andaime Exemplo', 'Pintura', 'Maria Exemplo']
+      ];
+      
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Importacao");
+      
+      worksheet['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 30 }];
+      XLSX.writeFile(workbook, `Modelo_Importacao_Configuracoes.xlsx`);
+    } catch (error) {
+      alert("Erro ao gerar o modelo. Tente novamente.");
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const reader = new FileReader();
+
+      reader.onload = (evt) => {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws);
+
+        let importedProducts = [];
+        let importedSectors = [];
+        let importedWorkers = [];
+
+        data.forEach(row => {
+          if (row['Produtos']) importedProducts.push(String(row['Produtos']).trim());
+          if (row['Setores']) importedSectors.push(String(row['Setores']).trim());
+          if (row['Colaboradores']) importedWorkers.push(String(row['Colaboradores']).trim());
+        });
+
+        if (importedProducts.length > 0) {
+          setProducts(prev => [...new Set([...prev, ...importedProducts])]);
+        }
+        if (importedSectors.length > 0) {
+          setSectors(prev => [...new Set([...prev, ...importedSectors])]);
+        }
+        if (importedWorkers.length > 0) {
+          setWorkers(prev => [...new Set([...prev, ...importedWorkers])]);
+        }
+
+        alert("Dados importados com sucesso!");
+        if(fileInputRef.current) fileInputRef.current.value = '';
+      };
+      
+      reader.readAsBinaryString(file);
+    } catch (error) {
+      console.error("Erro ao importar Excel:", error);
+      alert("Erro ao ler o arquivo. Certifique-se de que é um Excel válido.");
+    }
+  };
+
   // --- Criação e Edição de OM (Com Supabase) ---
   const handleAddProduct = () => {
-    if (currentQty > 0) {
+    if (currentQty > 0 && currentProduct) {
       const existingProduct = newProducts.find(p => p.name === currentProduct);
       if (existingProduct) {
         setNewProducts(newProducts.map(p => p.name === currentProduct ? { ...p, quantity: p.quantity + Number(currentQty) } : p));
@@ -451,23 +558,33 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 bg-slate-800 p-1 rounded-lg">
+          <div className="flex items-center space-x-2 bg-slate-800 p-1 rounded-lg flex-wrap gap-y-2 justify-center">
             <button 
               onClick={() => setCurrentView('oms')}
               className={`px-4 py-2 rounded-md font-medium flex items-center transition-colors ${currentView === 'oms' ? 'bg-orange-500 text-white shadow' : 'text-slate-300 hover:text-white'}`}
             >
-              <ListTodo size={18} className="mr-2" /> Ordens
+              <ListTodo size={18} className="mr-2 hidden sm:block" /> Ordens
             </button>
             <button 
               onClick={() => setCurrentView('dashboard')}
               className={`px-4 py-2 rounded-md font-medium flex items-center transition-colors ${currentView === 'dashboard' ? 'bg-orange-500 text-white shadow' : 'text-slate-300 hover:text-white'}`}
             >
-              <BarChart3 size={18} className="mr-2" /> Dashboard
+              <BarChart3 size={18} className="mr-2 hidden sm:block" /> Dashboard
+            </button>
+            <button 
+              onClick={() => setCurrentView('settings')}
+              className={`px-4 py-2 rounded-md font-medium flex items-center transition-colors ${currentView === 'settings' ? 'bg-orange-500 text-white shadow' : 'text-slate-300 hover:text-white'}`}
+            >
+              <Settings size={18} className="mr-2 hidden sm:block" /> Configurações
             </button>
           </div>
 
           <button 
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setNewSector(sectors[0] || '');
+              setCurrentProduct(products[0] || '');
+              setIsModalOpen(true);
+            }}
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md font-medium flex items-center transition-colors shadow-sm"
           >
             <Plus size={18} className="mr-2" /> Nova OM
@@ -577,7 +694,13 @@ export default function App() {
                           <div className="flex space-x-1 shrink-0 ml-2">
                             {om.status !== 'completed' && (
                               <button 
-                                onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
+                                onClick={() => { 
+                                  setManageSelectedProduct(products[0] || '');
+                                  setManageSelectedSector(sectors[0] || '');
+                                  setManageSelectedWorker(workers[0] || '');
+                                  setOmToUpdate(om); 
+                                  setIsModalOpen(false); 
+                                }}
                                 className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors"
                               >
                                 <Edit size={10} className="mr-1"/> Editar
@@ -705,18 +828,8 @@ export default function App() {
                           <div>
                             <div className="flex items-center justify-between mb-2">
                               <p className="text-[11px] font-bold text-gray-500 uppercase flex items-center">
-                                <Users size={12} className="mr-1"/> Equipe & Setores
+                                <Users size={12} className="mr-1"/> Equipe Envolvida Historicamente
                               </p>
-                              <div className="flex space-x-1">
-                                {om.status !== 'completed' && (
-                                  <button 
-                                    onClick={() => { setOmToUpdate(om); setIsModalOpen(false); }}
-                                    className="text-[10px] font-bold text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded transition-colors"
-                                  >
-                                    <Edit size={10} className="mr-1"/> Atualizar Dados
-                                  </button>
-                                )}
-                              </div>
                             </div>
                             <div className="bg-white p-2.5 rounded border border-gray-200 shadow-sm">
                               <div className="flex items-start">
@@ -833,7 +946,7 @@ export default function App() {
               )}
             </div>
           </>
-        ) : (
+        ) : currentView === 'dashboard' ? (
           /* --- DASHBOARD VIEW --- */
           <div className="space-y-6 animate-in fade-in duration-500">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
@@ -942,6 +1055,119 @@ export default function App() {
               </div>
             </div>
           </div>
+        ) : (
+          /* --- CONFIGURAÇÕES VIEW --- */
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center">
+              <Settings className="mr-3 text-orange-500" /> Configurações do Sistema
+            </h2>
+            
+            {/* Bloco de Importação em Lote */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 border-l-4 border-l-green-500">
+              <h3 className="font-bold text-gray-800 mb-2 flex items-center">
+                <FileSpreadsheet className="mr-2 text-green-600" size={20}/> Importação em Lote
+              </h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Adicione múltiplos Equipamentos, Setores e Colaboradores de uma só vez utilizando uma planilha Excel. Os novos itens serão adicionados à sua lista sem apagar os que já existem.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button 
+                  onClick={downloadSettingsTemplate} 
+                  className="flex items-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md font-bold text-sm transition-colors border border-gray-300"
+                >
+                  <Download size={16} className="mr-2"/> Baixar Planilha Modelo
+                </button>
+                <input 
+                  type="file" 
+                  accept=".xlsx, .xls, .csv" 
+                  className="hidden" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                />
+                <button 
+                  onClick={() => fileInputRef.current.click()} 
+                  className="flex items-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md font-bold text-sm transition-colors shadow-sm"
+                >
+                  <Upload size={16} className="mr-2"/> Importar Planilha Preenchida
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Box: Equipamentos / Produtos */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Package className="mr-2 text-orange-500" size={18}/> Equipamentos / Produtos</h3>
+                <div className="flex mb-4">
+                  <input 
+                    type="text" 
+                    value={newProductInput} 
+                    onChange={e => setNewProductInput(e.target.value)} 
+                    placeholder="Ex: Viga de Alumínio"
+                    className="flex-grow border border-gray-300 rounded-l-md p-2 text-sm outline-none focus:border-orange-500" 
+                  />
+                  <button onClick={() => handleAddSettingItem('product')} className="bg-orange-500 text-white px-3 rounded-r-md text-sm font-bold hover:bg-orange-600">Add</button>
+                </div>
+                <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {products.map(p => (
+                    <li key={p} className="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100 text-sm">
+                      <span className="text-gray-700 truncate">{p}</span>
+                      <button onClick={() => handleRemoveSettingItem('product', p)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={14}/></button>
+                    </li>
+                  ))}
+                  {products.length === 0 && <li className="text-sm text-gray-400 italic">Nenhum item cadastrado.</li>}
+                </ul>
+              </div>
+
+              {/* Box: Setores */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Wrench className="mr-2 text-blue-500" size={18}/> Setores Operacionais</h3>
+                <div className="flex mb-4">
+                  <input 
+                    type="text" 
+                    value={newSectorInput} 
+                    onChange={e => setNewSectorInput(e.target.value)} 
+                    placeholder="Ex: Logística"
+                    className="flex-grow border border-gray-300 rounded-l-md p-2 text-sm outline-none focus:border-blue-500" 
+                  />
+                  <button onClick={() => handleAddSettingItem('sector')} className="bg-blue-600 text-white px-3 rounded-r-md text-sm font-bold hover:bg-blue-700">Add</button>
+                </div>
+                <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {sectors.map(s => (
+                    <li key={s} className="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100 text-sm">
+                      <span className="text-gray-700 truncate">{s}</span>
+                      <button onClick={() => handleRemoveSettingItem('sector', s)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={14}/></button>
+                    </li>
+                  ))}
+                  {sectors.length === 0 && <li className="text-sm text-gray-400 italic">Nenhum setor cadastrado.</li>}
+                </ul>
+              </div>
+
+              {/* Box: Colaboradores */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="font-bold text-gray-800 mb-4 flex items-center border-b pb-2"><Users className="mr-2 text-green-500" size={18}/> Colaboradores</h3>
+                <div className="flex mb-4">
+                  <input 
+                    type="text" 
+                    value={newWorkerInput} 
+                    onChange={e => setNewWorkerInput(e.target.value)} 
+                    placeholder="Ex: Maria Silva"
+                    className="flex-grow border border-gray-300 rounded-l-md p-2 text-sm outline-none focus:border-green-500" 
+                  />
+                  <button onClick={() => handleAddSettingItem('worker')} className="bg-green-600 text-white px-3 rounded-r-md text-sm font-bold hover:bg-green-700">Add</button>
+                </div>
+                <ul className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {workers.map(w => (
+                    <li key={w} className="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100 text-sm">
+                      <span className="text-gray-700 truncate">{w}</span>
+                      <button onClick={() => handleRemoveSettingItem('worker', w)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={14}/></button>
+                    </li>
+                  ))}
+                  {workers.length === 0 && <li className="text-sm text-gray-400 italic">Nenhum colaborador cadastrado.</li>}
+                </ul>
+              </div>
+
+            </div>
+          </div>
         )}
       </main>
 
@@ -956,6 +1182,7 @@ export default function App() {
             
             <form onSubmit={handleCreateOM} className="p-6 overflow-y-auto space-y-6">
               
+              {/* Linha 1: Titulo e Objetivo */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Título / Descrição Geral</label>
@@ -973,6 +1200,7 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Linha 2: Criticidade, Setor (Sem responsável) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Criticidade</label>
@@ -984,11 +1212,12 @@ export default function App() {
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Setor Inicial</label>
                   <select value={newSector} onChange={(e) => setNewSector(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-2 bg-white outline-none">
-                    {MOCK_SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+                    {sectors.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               </div>
 
+              {/* Linha 3: Observações */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wide mb-1">Observações Adicionais</label>
                 <textarea 
@@ -999,6 +1228,7 @@ export default function App() {
                 />
               </div>
 
+              {/* Linha 4: Gestão de Produtos */}
               <div className="border border-orange-200 rounded-lg overflow-hidden">
                 <div className="bg-orange-50 p-3 border-b border-orange-200 flex items-center">
                   <Package className="text-orange-600 mr-2" size={18}/>
@@ -1007,7 +1237,7 @@ export default function App() {
                 <div className="p-4">
                   <div className="flex space-x-2 mb-4">
                     <select value={currentProduct} onChange={(e) => setCurrentProduct(e.target.value)} className="flex-grow border border-gray-300 rounded-md px-3 py-2 bg-white outline-none text-sm">
-                      {MOCK_PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                      {products.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                     <input type="number" min="1" value={currentQty} onChange={(e) => setCurrentQty(e.target.value)} className="w-20 border border-gray-300 rounded-md px-3 py-2 outline-none text-sm" placeholder="Qtd"/>
                     <button type="button" onClick={handleAddProduct} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md font-bold text-sm transition-colors">
@@ -1015,6 +1245,7 @@ export default function App() {
                     </button>
                   </div>
                   
+                  {/* Lista de Produtos Adicionados */}
                   {newProducts.length > 0 ? (
                     <div className="bg-white border border-gray-200 rounded-md overflow-hidden">
                       {newProducts.map((prod, idx) => (
@@ -1046,7 +1277,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: INICIAR / RETOMAR OM */}
+      {/* MODAL: INICIAR / RETOMAR OM (Identificação de Usuário/Setor) */}
       {omToStart && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col">
@@ -1063,7 +1294,7 @@ export default function App() {
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Colaborador</label>
                 <select required value={actionWorker} onChange={(e) => setActionWorker(e.target.value)} className="w-full border border-gray-300 rounded p-2 outline-none focus:border-blue-500">
                   <option value="" disabled>Selecione seu nome...</option>
-                  {MOCK_WORKERS.map(w => <option key={w} value={w}>{w}</option>)}
+                  {workers.map(w => <option key={w} value={w}>{w}</option>)}
                 </select>
               </div>
 
@@ -1071,7 +1302,7 @@ export default function App() {
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Setor Atual</label>
                 <select required value={actionSector} onChange={(e) => setActionSector(e.target.value)} className="w-full border border-gray-300 rounded p-2 outline-none focus:border-blue-500">
                   <option value="" disabled>Selecione o setor...</option>
-                  {MOCK_SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {sectors.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
 
@@ -1122,7 +1353,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: ATUALIZAR DADOS DA OM */}
+      {/* MODAL: ATUALIZAR DADOS DA OM (Setores, Pessoas, Quantidades) */}
       {omToUpdate && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
@@ -1142,7 +1373,7 @@ export default function App() {
                 
                 <div className="flex space-x-2 mb-3 mt-2">
                   <select value={manageSelectedProduct} onChange={(e) => setManageSelectedProduct(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
-                    {MOCK_PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                    {products.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                   <input type="number" min="1" value={manageSelectedQty} onChange={(e) => setManageSelectedQty(e.target.value)} className="w-16 border border-gray-300 rounded p-1.5 text-xs outline-none" placeholder="Qtd"/>
                   <button onClick={() => handleAddDataToOm('product')} className="bg-orange-500 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-orange-600">Adicionar</button>
@@ -1173,7 +1404,7 @@ export default function App() {
                 <div className="flex space-x-2 mb-3 mt-2">
                   <select value={manageSelectedWorker} onChange={(e) => setManageSelectedWorker(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
                     <option value="">Selecione um Colaborador...</option>
-                    {MOCK_WORKERS.filter(w => !omToUpdate.assignees.includes(w)).map(w => <option key={w} value={w}>{w}</option>)}
+                    {workers.filter(w => !omToUpdate.assignees.includes(w)).map(w => <option key={w} value={w}>{w}</option>)}
                   </select>
                   <button onClick={() => handleAddDataToOm('worker')} className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-700">Incluir</button>
                 </div>
@@ -1193,7 +1424,7 @@ export default function App() {
                 <div className="flex space-x-2 mb-3 mt-2">
                   <select value={manageSelectedSector} onChange={(e) => setManageSelectedSector(e.target.value)} className="flex-grow border border-gray-300 rounded p-1.5 text-xs outline-none">
                     <option value="">Selecione um Setor...</option>
-                    {MOCK_SECTORS.filter(s => !omToUpdate.sectors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
+                    {sectors.filter(s => !omToUpdate.sectors.includes(s)).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                   <button onClick={() => handleAddDataToOm('sector')} className="bg-slate-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-slate-700">Incluir</button>
                 </div>
