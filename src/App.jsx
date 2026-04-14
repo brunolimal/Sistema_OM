@@ -1308,8 +1308,8 @@ export default function App() {
                   <select value={newObjective} onChange={(e) => setNewObjective(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 outline-none">
                     <option value="Manutenção">Manutenção</option>
                     <option value="Fabricação">Fabricação</option>
-                    <option value="CARGA/DESCARGA">CARGA/DESCARGA</option>
-                    <option value="SERVIÇOS GERAIS">SERVIÇOS GERAIS</option>
+                    <option value="Carga/Descarga">Carga/Descarga</option>
+                    <option value="Serviços Gerais">Serviços Gerais</option>
                   </select>
                 </div>
               </div>
